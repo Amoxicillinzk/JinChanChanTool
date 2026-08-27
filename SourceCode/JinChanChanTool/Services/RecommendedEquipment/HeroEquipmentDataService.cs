@@ -236,7 +236,19 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 return true;
             }
 
+            if (HeroEquipments.Any(item => IsRawApiKey(item.HeroName)))
+            {
+                return true;
+            }
+
             return (DateTime.Now - _lastUpdateTime).TotalHours >= hours;
+        }
+
+        private static bool IsRawApiKey(string value)
+        {
+            return !string.IsNullOrWhiteSpace(value) &&
+                   (value.StartsWith("DA_", StringComparison.OrdinalIgnoreCase) ||
+                    value.StartsWith("TFT", StringComparison.OrdinalIgnoreCase));
         }
 
         private void LoadFromJson()

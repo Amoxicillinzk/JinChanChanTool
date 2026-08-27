@@ -377,6 +377,12 @@ namespace JinChanChanTool.Services.DataServices
                 return true;
             }
 
+            // 刷新一下 Metatft 原始键，必须优先刷新为本地可显示的中文数据。
+            if (_recommendedLineUps.Any(ContainsRawApiKey))
+            {
+                return true;
+            }
+
             return (DateTime.Now - _lastUpdateTime).TotalHours >= hours;
         }
         #endregion
@@ -433,6 +439,19 @@ namespace JinChanChanTool.Services.DataServices
                     _lastUpdateTime = DateTime.MinValue;
                 }
             }
+        }
+
+        private static bool ContainsRawApiKey(RecommendedLineUp lineUp)
+        {
+            return IsRawApiKey(lineUp.LineUpName) ||
+                   lineUp.LineUpUnits?.Any(unit => IsRawApiKey(unit.HeroName)) == true;
+        }
+
+        private static bool IsRawApiKey(string value)
+        {
+            return !string.IsNullOrWhiteSpace(value) &&
+                   (value.Contains("DA_", StringComparison.OrdinalIgnoreCase) ||
+                    value.Contains("TFT", StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>

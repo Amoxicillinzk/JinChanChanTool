@@ -32,7 +32,6 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         {
             // 1. 获取基础翻译数据
             var heroKeys = _gameDataService.CurrentSeasonHeroKeys;
-            var heroTranslations = _gameDataService.HeroTranslations;
             var itemTranslations = _gameDataService.ItemTranslations;
 
             if (heroKeys == null || heroKeys.Count == 0)
@@ -60,7 +59,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 {
                     try
                     {
-                        var heroEquipment = await FetchAndProcessHeroDataAsync(heroKey, heroTranslations, itemTranslations);
+                        var heroEquipment = await FetchAndProcessHeroDataAsync(heroKey, itemTranslations);
                         if (heroEquipment != null)
                         {
                             finalHeroEquipments.Add(heroEquipment);
@@ -68,14 +67,14 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                     }
                     catch (Exception ex)
                     {
-                        string heroName = heroTranslations.GetValueOrDefault(heroKey, heroKey);
+                        string heroName = _gameDataService.GetHeroTranslation(heroKey);
                         Debug.WriteLine($"处理英雄 {heroName} 时发生未知错误: {ex.Message}");
                     }
                     finally
                     {
                         int currentCount = Interlocked.Increment(ref processedCount);
                         int percentage = (int)((double)currentCount / totalHeroes * 100);
-                        string heroName = heroTranslations.GetValueOrDefault(heroKey, heroKey);
+                        string heroName = _gameDataService.GetHeroTranslation(heroKey);
                         progress?.Report(Tuple.Create(percentage, $"({currentCount}/{totalHeroes}) 已处理: {heroName}"));
 
                         semaphore.Release();
@@ -92,7 +91,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         /// <summary>
         /// (辅助方法) 异步获取并处理单个英雄的数据。
         /// </summary>
-        private async Task<DataClass.RecommendedEquipment> FetchAndProcessHeroDataAsync(string heroKey, Dictionary<string, string> heroTranslations, Dictionary<string, string> itemTranslations)
+        private async Task<DataClass.RecommendedEquipment> FetchAndProcessHeroDataAsync(string heroKey, Dictionary<string, string> itemTranslations)
         {
             //string apiUrl = $"https://api-hc.metatft.com/tft-stat-api/unit_detail?queue=1100&patch=current&days=3&rank=CHALLENGER,DIAMOND,GRANDMASTER,MASTER&permit_filter_adjustment=true&unit={heroKey}";
             string apiUrl = $"https://api.xiaoyumetatft.xyz/tft-stat-api/unit_detail?queue=1100&patch=current&days=3&rank=CHALLENGER,DIAMOND,GRANDMASTER,MASTER&permit_filter_adjustment=true&unit={heroKey}";
@@ -146,7 +145,13 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                             .Select(key => itemTranslations.GetValueOrDefault(key, $"【翻译失败:{key}】"))
                             .ToList();
 
-                        string rawName = heroTranslations.GetValueOrDefault(heroKey, heroKey);
+                        string rawName = _gameDataService.GetHeroTranslation(heroKey);
+                        if (rawName == heroKey)
+                        {
+                            Debug.WriteLine($"跳过未翻译英雄的装备数据: {heroKey}");
+                            return null;
+                        }
+
                         string cleanName = rawName.Replace("·", "").Trim();
 
                         return new DataClass.RecommendedEquipment

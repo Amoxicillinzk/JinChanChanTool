@@ -3,6 +3,7 @@ using JinChanChanTool.Forms;
 using JinChanChanTool.Services.Network;
 using JinChanChanTool.Services.RecommendedEquipment.Interface;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -22,6 +23,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
 
         // TranslationsUrl now dynamically built from UnitList API tft_set response
         private const string UnitListUrl = ProxyHost + "/tft-comps-api/unit_items_processed";
+        private const string SeasonSourceUrl = ProxyHost + "/tft-comps-api/comps_data?queue=1100";
         private const string GeneralTranslationsUrl = ProxyHost + "/locales/zh_cn.json";
 
         // 删除了本地 static readonly HttpClient _httpClient 实例
@@ -35,6 +37,10 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         public Dictionary<string, string> TraitTranslations { get; private set; }
         public Dictionary<string, string> CommonTranslations { get; private set; }
         public List<string> CurrentSeasonHeroKeys { get; private set; }
+        public Dictionary<string, string> LineUpCodeToName { get; private set; }
+
+        private Dictionary<string, string> _heroTranslationAliases;
+        private List<string> _seasonHeroKeysFromTranslations;
 
         #endregion
 
@@ -45,6 +51,9 @@ namespace JinChanChanTool.Services.RecommendedEquipment
             TraitTranslations = new Dictionary<string, string>();
             CommonTranslations = new Dictionary<string, string>();
             CurrentSeasonHeroKeys = new List<string>();
+            LineUpCodeToName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _heroTranslationAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _seasonHeroKeysFromTranslations = new List<string>();
         }
 
         /// <summary>
@@ -58,25 +67,33 @@ namespace JinChanChanTool.Services.RecommendedEquipment
             {
                 OutputForm.Instance.WriteLineOutputMessage("DynamicGameDataService: 开始初始化...");
 
-                // Phase 1: fetch unit list + general translations in parallel
+                // Phase 1: fetch the season source, unit list and general translations in parallel.
                 var unitListTask = HttpProvider.Client.GetAsync(UnitListUrl, HttpCompletionOption.ResponseContentRead);
+                var seasonSourceTask = HttpProvider.Client.GetAsync(SeasonSourceUrl, HttpCompletionOption.ResponseContentRead);
                 var generalTask = HttpProvider.Client.GetAsync(GeneralTranslationsUrl, HttpCompletionOption.ResponseContentRead);
 
-                await Task.WhenAll(unitListTask, generalTask);
+                await Task.WhenAll(unitListTask, seasonSourceTask, generalTask);
 
                 using var unitRes = await unitListTask;
+                using var seasonSourceRes = await seasonSourceTask;
                 using var generalRes = await generalTask;
 
                 unitRes.EnsureSuccessStatusCode();
+                seasonSourceRes.EnsureSuccessStatusCode();
                 generalRes.EnsureSuccessStatusCode();
 
                 string unitListJson = await unitRes.Content.ReadAsStringAsync();
+                string seasonSourceJson = await seasonSourceRes.Content.ReadAsStringAsync();
                 string generalJson = await generalRes.Content.ReadAsStringAsync();
 
-                // Extract season from unit list to build dynamic TranslationsUrl
-                using var doc = JsonDocument.Parse(unitListJson);
-                string tftSet = doc.RootElement.GetProperty("tft_set").GetString();
-                string seasonNum = tftSet.Replace("Set", "").Replace("TFT", "");
+                // comps_data is the authoritative source for the season used by lineup recommendations.
+                using var seasonDoc = JsonDocument.Parse(seasonSourceJson);
+                string tftSet = seasonDoc.RootElement.GetProperty("tft_set").GetString();
+                string seasonNum = new string(tftSet.Where(char.IsDigit).ToArray());
+                if (string.IsNullOrWhiteSpace(seasonNum))
+                {
+                    throw new InvalidOperationException($"赛季标识“{tftSet}”不包含有效的赛季编号。");
+                }
                 string translationsUrl = $"{ProxyHost}/lookups/TFTSet{seasonNum}_latest_zh_cn.json";
 
 
@@ -87,8 +104,8 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 string translationJson = await transRes.Content.ReadAsStringAsync();
 
                 // Process all data
-                ProcessUnitListData(unitListJson);
                 ProcessTranslationData(translationJson);
+                ProcessCurrentSeasonHeroKeys(seasonSourceJson, unitListJson);
                 ProcessGeneralTranslationData(generalJson);
 
                 _isInitialized = true;
@@ -138,6 +155,45 @@ namespace JinChanChanTool.Services.RecommendedEquipment
             OutputForm.Instance.WriteLineOutputMessage($"已确定当前赛季: {seasonPrefix}，找到 {CurrentSeasonHeroKeys.Count} 位英雄。");
         }
 
+        private void ProcessCurrentSeasonHeroKeys(string seasonJson, string unitListJson)
+        {
+            if (_seasonHeroKeysFromTranslations.Count > 0)
+            {
+                CurrentSeasonHeroKeys = _seasonHeroKeysFromTranslations;
+                OutputForm.Instance.WriteLineOutputMessage($"已从赛季翻译数据确定当前赛季英雄，找到 {CurrentSeasonHeroKeys.Count} 位英雄。");
+                return;
+            }
+
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var document = JsonDocument.Parse(seasonJson))
+            {
+                if (document.RootElement.TryGetProperty("results", out var results) &&
+                    results.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty("cluster_details", out var clusterDetails))
+                {
+                    foreach (var cluster in clusterDetails.EnumerateObject())
+                    {
+                        if (!cluster.Value.TryGetProperty("units_string", out var unitsString)) continue;
+
+                        foreach (string key in unitsString.GetString()?
+                            .Split(", ", StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>())
+                        {
+                            keys.Add(key);
+                        }
+                    }
+                }
+            }
+
+            if (keys.Count > 0)
+            {
+                CurrentSeasonHeroKeys = keys.ToList();
+                OutputForm.Instance.WriteLineOutputMessage($"已从阵容数据确定当前赛季英雄，找到 {CurrentSeasonHeroKeys.Count} 位英雄。");
+                return;
+            }
+
+            ProcessUnitListData(unitListJson);
+        }
+
         private void ProcessTranslationData(string json)
         {
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -148,10 +204,38 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 throw new InvalidOperationException("未能正确解析翻译数据或数据格式无效。");
             }
 
-            HeroTranslations = translationData.Units
+            var translatedUnits = translationData.Units
                 .Where(unit => !string.IsNullOrEmpty(unit.ApiName) && !string.IsNullOrEmpty(unit.Name))
-                .GroupBy(unit => unit.ApiName)
-                .ToDictionary(g => g.Key, g => g.First().Name);
+                .ToList();
+
+            HeroTranslations = translatedUnits
+                .SelectMany(unit => new[] { unit.ApiName }
+                    .Concat(unit.AssetNames ?? [] )
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => new KeyValuePair<string, string>(key, unit.Name)))
+                .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.OrdinalIgnoreCase);
+
+            _seasonHeroKeysFromTranslations = translatedUnits
+                .Where(unit => unit.ShopUnit)
+                .Select(unit => unit.AssetNames?.FirstOrDefault() ?? unit.ApiName)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            LineUpCodeToName = translatedUnits
+                .Where(unit => unit.ShopUnit && !string.IsNullOrWhiteSpace(unit.Code) && !string.IsNullOrWhiteSpace(unit.Name))
+                .GroupBy(unit => unit.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.OrdinalIgnoreCase);
+
+            _heroTranslationAliases = translatedUnits
+                .SelectMany(unit => new[] { unit.ApiName }
+                    .Concat(unit.AssetNames ?? [])
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => new KeyValuePair<string, string>(NormalizeHeroApiKey(key), unit.Name)))
+                .Where(pair => pair.Key.Length > 0)
+                .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.OrdinalIgnoreCase);
 
             ItemTranslations = translationData.Items
                 .Where(item => !string.IsNullOrEmpty(item.ApiName) && !string.IsNullOrEmpty(item.Name))
@@ -164,6 +248,36 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 .ToDictionary(g => g.Key, g => g.First().Name);
 
             OutputForm.Instance.WriteLineOutputMessage($"已成功加载全量翻译数据（含 {TraitTranslations.Count} 条羁绊）。");
+        }
+
+        public string GetHeroTranslation(string apiName)
+        {
+            if (string.IsNullOrWhiteSpace(apiName)) return string.Empty;
+            if (HeroTranslations.TryGetValue(apiName, out string translatedName)) return translatedName;
+
+            string normalizedKey = NormalizeHeroApiKey(apiName);
+            return _heroTranslationAliases.TryGetValue(normalizedKey, out translatedName)
+                ? translatedName
+                : apiName;
+        }
+
+        private static string NormalizeHeroApiKey(string apiName)
+        {
+            string normalized = apiName.Trim();
+            int underscoreIndex = normalized.IndexOf('_');
+            if (normalized.StartsWith("DA_", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = normalized[3..];
+            }
+            else if (normalized.StartsWith("TFT", StringComparison.OrdinalIgnoreCase) && underscoreIndex >= 0)
+            {
+                normalized = normalized[(underscoreIndex + 1)..];
+            }
+
+            normalized = normalized.Replace("_AD", string.Empty, StringComparison.OrdinalIgnoreCase)
+                                   .Replace("_AP", string.Empty, StringComparison.OrdinalIgnoreCase)
+                                   .Replace("Small", string.Empty, StringComparison.OrdinalIgnoreCase);
+            return new string(normalized.Where(character => !char.IsDigit(character) && character != '_').ToArray());
         }
 
         #region 内部数据模型

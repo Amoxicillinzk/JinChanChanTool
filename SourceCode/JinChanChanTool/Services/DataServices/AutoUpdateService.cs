@@ -18,6 +18,7 @@ namespace JinChanChanTool.Services.DataServices
         private readonly IAutomaticSettingsService _automaticSettingsService;
         private readonly IHeroEquipmentDataService _heroEquipmentDataService;
         private readonly IRecommendedLineUpService _recommendedLineUpService;
+        private readonly ILineUpCodeDictionaryService _lineUpCodeDictionaryService;
 
         /// <summary>
         /// 构造函数
@@ -26,12 +27,14 @@ namespace JinChanChanTool.Services.DataServices
             IManualSettingsService manualSettingsService,
             IAutomaticSettingsService automaticSettingsService,
             IHeroEquipmentDataService heroEquipmentDataService,
-            IRecommendedLineUpService recommendedLineUpService)
+            IRecommendedLineUpService recommendedLineUpService,
+            ILineUpCodeDictionaryService lineUpCodeDictionaryService)
         {
             _manualSettingsService = manualSettingsService;
             _automaticSettingsService = automaticSettingsService;
             _heroEquipmentDataService = heroEquipmentDataService;
             _recommendedLineUpService = recommendedLineUpService;
+            _lineUpCodeDictionaryService = lineUpCodeDictionaryService;
         }
 
         /// <summary>
@@ -59,8 +62,10 @@ namespace JinChanChanTool.Services.DataServices
             // 检查是否需要更新阵容数据
             bool needsLineupUpdate = _manualSettingsService.CurrentConfig.IsAutomaticUpdateLineup &&
                                      _recommendedLineUpService.NeedsUpdate(_manualSettingsService.CurrentConfig.UpdateLineupInterval);
+
+            bool needsLineUpCodeDictionaryUpdate = _lineUpCodeDictionaryService.NeedsUpdate(mainSeason);
             // 如果都不需要更新，直接返回
-            if (!needsEquipmentUpdate && !needsLineupUpdate)
+            if (!needsEquipmentUpdate && !needsLineupUpdate && !needsLineUpCodeDictionaryUpdate)
             {
                 OutputForm.Instance.WriteLineOutputMessage("数据检查完成，均为最新版本。");
                 return;
@@ -71,6 +76,11 @@ namespace JinChanChanTool.Services.DataServices
             {
                 try
                 {
+                    if (needsLineUpCodeDictionaryUpdate)
+                    {
+                        await UpdateLineUpCodeDictionaryAsync(mainSeason);
+                    }
+
                     if (needsEquipmentUpdate)
                     {
                         await UpdateEquipmentDataAsync(mainSeason);
@@ -90,6 +100,36 @@ namespace JinChanChanTool.Services.DataServices
 
             // 立即返回，不阻塞启动流程
             OutputForm.Instance.WriteLineOutputMessage("正在后台更新推荐数据...");
+        }
+
+        /// <summary>
+        /// 更新主赛季阵容码字典，沿用动态游戏数据服务的网络请求链路。
+        /// </summary>
+        private async Task UpdateLineUpCodeDictionaryAsync(string targetSeason)
+        {
+            try
+            {
+                OutputForm.Instance.WriteLineOutputMessage("开始更新主赛季阵容码字典...");
+
+                DynamicGameDataService dynamicGameDataService = new DynamicGameDataService();
+                await dynamicGameDataService.InitializeAsync();
+
+                if (_lineUpCodeDictionaryService.UpdateDataFromCrawling(
+                        targetSeason,
+                        dynamicGameDataService.LineUpCodeToName))
+                {
+                    OutputForm.Instance.WriteLineOutputMessage(
+                        $"主赛季阵容码字典更新成功，共 {dynamicGameDataService.LineUpCodeToName.Count} 个英雄。");
+                }
+                else
+                {
+                    OutputForm.Instance.WriteLineOutputMessage("主赛季阵容码字典更新失败：没有有效的英雄编码。");
+                }
+            }
+            catch (Exception ex)
+            {
+                OutputForm.Instance.WriteLineOutputMessage($"主赛季阵容码字典更新失败: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -155,7 +195,7 @@ namespace JinChanChanTool.Services.DataServices
                 DynamicGameDataService dynamicGameDataService = new DynamicGameDataService();
                 await dynamicGameDataService.InitializeAsync();
 
-                LineupCrawlingService lineupCrawlingService = new LineupCrawlingService(dynamicGameDataService);
+                LineupCrawlingService lineupCrawlingService = new LineupCrawlingService(dynamicGameDataService, targetSeason);
 
                 // 创建进度报告器
                 Progress<Tuple<int, string>> progress = new Progress<Tuple<int, string>>(tuple =>

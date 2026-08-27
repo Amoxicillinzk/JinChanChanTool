@@ -92,7 +92,8 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             }
 
             // 检查进程名，决定使用哪种窗口查找策略
-            if (process.ProcessName.Equals("League of Legends", StringComparison.OrdinalIgnoreCase))
+            if (process.ProcessName.Equals("League of Legends", StringComparison.OrdinalIgnoreCase) ||
+                process.ProcessName.Equals("TFTTencentClient-Win64-Shipping", StringComparison.OrdinalIgnoreCase))
             {
                 // --- 对于云顶之弈，使用简单、直接的父窗口查找策略 ---
                 if (_windowInteractionService.SetTargetWindow(process))

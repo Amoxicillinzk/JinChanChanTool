@@ -49,5 +49,14 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         /// </summary>
         [JsonPropertyName("name")]
         public string Name { get; set; }
+
+        [JsonPropertyName("code")]
+        public string Code { get; set; } = string.Empty;
+
+        [JsonPropertyName("assetNames")]
+        public List<string> AssetNames { get; set; }
+
+        [JsonPropertyName("shopUnit")]
+        public bool ShopUnit { get; set; }
     }
 }
