@@ -65,6 +65,10 @@
             comboBox_语言选择 = new ComboBox();
             label_界面语言 = new Label();
             panel_分割线_常规1 = new Panel();
+            capsuleSwitch_所有窗口置顶 = new JinChanChanTool.DIYComponents.CapsuleSwitch();
+            label_所有窗口置顶描述 = new Label();
+            label_所有窗口置顶 = new Label();
+            panel_分割线_常规2 = new Panel();
             tabPage_快捷键 = new TabPage();
             tabPage_功能 = new TabPage();
             tabControl_高亮边框渐变色1 = new TabControl();
@@ -698,6 +702,10 @@
             // 
             panel_常规.AutoScroll = true;
             panel_常规.BackColor = Color.White;
+            panel_常规.Controls.Add(panel_分割线_常规2);
+            panel_常规.Controls.Add(capsuleSwitch_所有窗口置顶);
+            panel_常规.Controls.Add(label_所有窗口置顶描述);
+            panel_常规.Controls.Add(label_所有窗口置顶);
             panel_常规.Controls.Add(label_界面语言描述);
             panel_常规.Controls.Add(comboBox_语言选择);
             panel_常规.Controls.Add(label_界面语言);
@@ -751,6 +759,53 @@
             panel_分割线_常规1.Name = "panel_分割线_常规1";
             panel_分割线_常规1.Size = new Size(950, 1);
             panel_分割线_常规1.TabIndex = 258;
+            //
+            // label_所有窗口置顶
+            //
+            label_所有窗口置顶.AutoSize = true;
+            label_所有窗口置顶.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold, GraphicsUnit.Point, 134);
+            label_所有窗口置顶.Location = new Point(5, 68);
+            label_所有窗口置顶.MaximumSize = new Size(862, 17);
+            label_所有窗口置顶.MinimumSize = new Size(92, 17);
+            label_所有窗口置顶.Name = "label_所有窗口置顶";
+            label_所有窗口置顶.Size = new Size(92, 17);
+            label_所有窗口置顶.TabIndex = 261;
+            label_所有窗口置顶.Text = "所有窗口置顶";
+            //
+            // label_所有窗口置顶描述
+            //
+            label_所有窗口置顶描述.AutoSize = true;
+            label_所有窗口置顶描述.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point, 134);
+            label_所有窗口置顶描述.ForeColor = Color.FromArgb(133, 133, 133);
+            label_所有窗口置顶描述.Location = new Point(5, 86);
+            label_所有窗口置顶描述.MaximumSize = new Size(862, 34);
+            label_所有窗口置顶描述.MinimumSize = new Size(224, 17);
+            label_所有窗口置顶描述.Name = "label_所有窗口置顶描述";
+            label_所有窗口置顶描述.Size = new Size(224, 17);
+            label_所有窗口置顶描述.TabIndex = 262;
+            label_所有窗口置顶描述.Text = "使应用的所有窗口始终显示在其他窗口上方";
+            //
+            // capsuleSwitch_所有窗口置顶
+            //
+            capsuleSwitch_所有窗口置顶.Location = new Point(891, 82);
+            capsuleSwitch_所有窗口置顶.Name = "capsuleSwitch_所有窗口置顶";
+            capsuleSwitch_所有窗口置顶.OffColor = Color.FromArgb(189, 189, 189);
+            capsuleSwitch_所有窗口置顶.OnColor = Color.FromArgb(24, 96, 251);
+            capsuleSwitch_所有窗口置顶.ShowText = false;
+            capsuleSwitch_所有窗口置顶.Size = new Size(50, 20);
+            capsuleSwitch_所有窗口置顶.TabIndex = 263;
+            capsuleSwitch_所有窗口置顶.Text = "capsuleSwitch20";
+            capsuleSwitch_所有窗口置顶.TextColor = Color.White;
+            capsuleSwitch_所有窗口置顶.ThumbColor = Color.White;
+            //
+            // panel_分割线_常规2
+            //
+            panel_分割线_常规2.BackColor = Color.Silver;
+            panel_分割线_常规2.Location = new Point(5, 125);
+            panel_分割线_常规2.Margin = new Padding(0);
+            panel_分割线_常规2.Name = "panel_分割线_常规2";
+            panel_分割线_常规2.Size = new Size(950, 1);
+            panel_分割线_常规2.TabIndex = 264;
             // 
             // tabPage_快捷键
             // 
@@ -3976,9 +4031,13 @@
         private ColorDialog colorDialog_高亮边框渐变色1;
         private ColorDialog colorDialog_高亮边框渐变色2;
         private Panel panel_分割线_常规1;
+        private Panel panel_分割线_常规2;
         private Label label_界面语言;
         private Label label_界面语言描述;
         private ComboBox comboBox_语言选择;
+        private Label label_所有窗口置顶;
+        private Label label_所有窗口置顶描述;
+        private DIYComponents.CapsuleSwitch capsuleSwitch_所有窗口置顶;
         private TabPage tabPage_常规;
         public Panel panel_常规;
         private Panel panel_分割线_快捷键2;

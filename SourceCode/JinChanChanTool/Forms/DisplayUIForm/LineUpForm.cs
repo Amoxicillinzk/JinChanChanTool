@@ -632,7 +632,7 @@ namespace JinChanChanTool.Forms
             // 打开推荐阵容选择窗口
             using (var selectForm = new LineUpSelectForm(_iRecommendedLineUpService, _heroDataService, _equipmentService, _iLocalizationService))
             {
-                selectForm.TopMost = true;
+                selectForm.TopMost = TopMost;
                 if (selectForm.ShowDialog(this) == DialogResult.OK && selectForm.SelectedLineUp != null)
                 {
                     // 用户选择了阵容，替换当前子阵容

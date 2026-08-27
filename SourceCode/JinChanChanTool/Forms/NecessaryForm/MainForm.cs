@@ -110,6 +110,7 @@ namespace JinChanChanTool
             #region 用户应用设置服务实例化并绑定事件
             _iManualSettingsService = iManualSettingsService;
             _iManualSettingsService.OnConfigSaved += OnConfigSaved;//绑定设置保存事件
+            TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
 
             #endregion
 
@@ -211,6 +212,7 @@ namespace JinChanChanTool
             #region 初始化阵容选择窗口
             LineUpForm.Instance.InitializeObject(_iLineUpService, _iAutomaticSettingsService, _iRecommendedLineUpService, _iheroDataService, _iEquipmentService);
             LineUpForm.Instance.InitializeLocalization(_iLocalizationService);
+            LineUpForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             if (_iManualSettingsService.CurrentConfig.IsUseLineUpForm)
             {
                 LineUpForm.Instance.Show();
@@ -219,6 +221,7 @@ namespace JinChanChanTool
 
             #region 初始化英雄选择窗口
             SelectForm.Instance.InitializeObject(_iAutomaticSettingsService);
+            SelectForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             if (_iManualSettingsService.CurrentConfig.IsUseSelectForm)
             {
                 SelectForm.Instance.Show();
@@ -239,6 +242,7 @@ namespace JinChanChanTool
             #region 初始化状态显示窗口
             StatusOverlayForm.Instance.InitializeLocalization(_iLocalizationService);
             StatusOverlayForm.Instance.InitializeObject(_iAutomaticSettingsService, _cardService);
+            StatusOverlayForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             if (_iManualSettingsService.CurrentConfig.IsUseStatusOverlayForm)
             {
                 StatusOverlayForm.Instance.Show();
@@ -325,13 +329,17 @@ namespace JinChanChanTool
                 UpdateOverlayStatus();
             }
 
+            if (e.ChangedFields.Contains("IsAllWindowsTopMost"))
+            {
+                ApplyTopMostToOpenForms();
+            }
+
             #region 如果变更的是窗口显示相关设置，则更新对应窗口的显示状态           
             if (e.ChangedFields.Contains("IsUseSelectForm"))
             {
                 if (_iManualSettingsService.CurrentConfig.IsUseSelectForm)
                 {
-                    SelectForm.Instance.TopMost = false;
-                    SelectForm.Instance.TopMost = true;
+                    SelectForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     SelectForm.Instance.Show();
                 }
                 else
@@ -344,8 +352,7 @@ namespace JinChanChanTool
             {
                 if (_iManualSettingsService.CurrentConfig.IsUseLineUpForm)
                 {
-                    LineUpForm.Instance.TopMost = false;
-                    LineUpForm.Instance.TopMost = true;
+                    LineUpForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     LineUpForm.Instance.Show();
                 }
                 else
@@ -358,8 +365,7 @@ namespace JinChanChanTool
             {
                 if (_iManualSettingsService.CurrentConfig.IsUseStatusOverlayForm)
                 {
-                    StatusOverlayForm.Instance.TopMost = false;
-                    StatusOverlayForm.Instance.TopMost = true;
+                    StatusOverlayForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     StatusOverlayForm.Instance.Show();
                     UpdateOverlayStatus();
                 }
@@ -373,8 +379,7 @@ namespace JinChanChanTool
             {
                 if (_iManualSettingsService.CurrentConfig.IsUseOutputForm)
                 {
-                    OutputForm.Instance.TopMost = false;
-                    OutputForm.Instance.TopMost = true;
+                    OutputForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     OutputForm.Instance.Show();
                 }
                 else
@@ -417,6 +422,18 @@ namespace JinChanChanTool
             }
         }
         #endregion
+
+        private void ApplyTopMostToOpenForms()
+        {
+            bool isTopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
+            foreach (Form form in Application.OpenForms.Cast<Form>().ToArray())
+            {
+                if (!form.IsDisposed)
+                {
+                    form.TopMost = isTopMost;
+                }
+            }
+        }
 
         #region 快捷键注册
         /// <summary>
@@ -668,7 +685,7 @@ namespace JinChanChanTool
             {
                 _settingFormInstance = new SettingForm(_iManualSettingsService, _iRecommendedLineUpService, _iLocalizationService);
                 _settingFormInstance.FormClosed += (s, args) => _settingFormInstance = null; // 窗口关闭时重置实例
-                _settingFormInstance.TopMost = true;
+                _settingFormInstance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                 _settingFormInstance.Show();
             }
             else
@@ -705,7 +722,7 @@ namespace JinChanChanTool
             {
                 _aboutFormInstance = new AboutForm(_iLocalizationService);
                 _aboutFormInstance.FormClosed += (s, args) => _aboutFormInstance = null; // 窗口关闭时重置实例
-                _aboutFormInstance.TopMost = true;
+                _aboutFormInstance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                 _aboutFormInstance.Show();
             }
             else
@@ -744,8 +761,7 @@ namespace JinChanChanTool
             {
                 // 如果窗口最小化，则还原
                 this.WindowState = FormWindowState.Normal;
-                this.TopMost = false;
-                this.TopMost = true;
+                this.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                 this.Show();
             }
             else
@@ -934,6 +950,12 @@ namespace JinChanChanTool
 
         private void roundedButton4_Click(object sender, EventArgs e)
         {
+            // 点击保存时，先提交主窗口中尚未按回车确认的阵容名称。
+            if (!CommitLineUpName(comboBox_阵容选择))
+            {
+                return;
+            }
+
             if (_iLineUpService.Save())
             {
                 MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.阵容已保存"), _iLocalizationService.Get("MainForm.MsgTitle.阵容已保存"), MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1143,18 +1165,29 @@ namespace JinChanChanTool
         private void comboBox_LineUps_Leave(object sender, EventArgs e)
         {
             ComboBox comboBox = sender as ComboBox;
+            if (ReferenceEquals(comboBox, comboBox_阵容选择) && IsMainLineUpSaveButtonTarget())
+            {
+                return;
+            }
+
+            CommitLineUpName(comboBox);
+        }
+
+        private bool CommitLineUpName(ComboBox comboBox)
+        {
             if (_iLineUpService.SetLineUpName(comboBox.Text))
             {
-                if (comboBox.Items.Count > _iLineUpService.GetLineUpIndex())
+                int lineUpIndex = _iLineUpService.GetLineUpIndex();
+                if (lineUpIndex >= 0 && comboBox.Items.Count > lineUpIndex)
                 {
-                    comboBox.Items[_iLineUpService.GetLineUpIndex()] = comboBox.Text;
+                    comboBox.Items[lineUpIndex] = comboBox.Text;
                 }
+                return true;
             }
-            else
-            {
-                // 如果保存失败，恢复下拉框文本为当前阵容名称
-                comboBox.Text = _iLineUpService.GetCurrentLineUp().LineUpName;
-            }
+
+            // 如果保存失败，恢复下拉框文本为当前阵容名称。
+            comboBox.Text = _iLineUpService.GetCurrentLineUp().LineUpName;
+            return false;
         }
 
         /// <summary>
@@ -1169,21 +1202,17 @@ namespace JinChanChanTool
             var key = e.KeyCode; // 获取按键代码
             if (key == Keys.Enter)
             {
-                if (_iLineUpService.SetLineUpName(comboBox.Text))
-                {
-                    if (comboBox.Items.Count > _iLineUpService.GetLineUpIndex())
-                    {
-                        comboBox.Items[_iLineUpService.GetLineUpIndex()] = comboBox.Text;
-                    }
-                }
-                else
-                {
-                    // 如果保存失败，恢复下拉框文本为当前阵容名称
-                    comboBox.Text = _iLineUpService.GetCurrentLineUp().LineUpName;
-                }
+                CommitLineUpName(comboBox);
                 this.ActiveControl = null;  // 将活动控件设置为null，下拉框失去焦点
             }
 
+        }
+
+        private bool IsMainLineUpSaveButtonTarget()
+        {
+            return roundedButton_保存.ContainsFocus
+                || roundedButton_保存.ClientRectangle.Contains(
+                    roundedButton_保存.PointToClient(Cursor.Position));
         }
 
 
@@ -1320,6 +1349,7 @@ namespace JinChanChanTool
                 // 打开装备选择窗口
                 using (EquipmentForm equipmentForm = new EquipmentForm(_iEquipmentService, hero.HeroName, equipmentIndex, _iLocalizationService))
                 {
+                    equipmentForm.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     if (equipmentForm.ShowDialog(this) == DialogResult.OK)
                     {
                         // 用户选择了装备，更新阵容数据
@@ -1384,6 +1414,7 @@ namespace JinChanChanTool
                 // 打开装备选择窗口
                 using (EquipmentForm equipmentForm = new EquipmentForm(_iEquipmentService, hero.HeroName, equipmentIndex, _iLocalizationService))
                 {
+                    equipmentForm.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                     if (equipmentForm.ShowDialog(LineUpForm.Instance) == DialogResult.OK)
                     {
                         // 用户选择了装备，更新阵容数据
@@ -1911,6 +1942,7 @@ namespace JinChanChanTool
 
             // 创建进度条窗口，用于向用户反馈进度 
             var progressForm = new ProgressForm(_iLocalizationService);
+            progressForm.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             IProgress<Tuple<int, string>> progress = new Progress<Tuple<int, string>>(update =>
             {
                 progressForm.UpdateProgress(update.Item1, update.Item2);
@@ -2235,7 +2267,7 @@ namespace JinChanChanTool
         {
             var form = new HeroInfoEditorForm(_iLocalizationService);
             form.Owner = this;// 设置父窗口，这样配置窗口会显示在主窗口上方但不会阻止主窗口
-            form.TopMost = true;// 确保窗口在最前面
+            form.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             form.Show();// 显示窗口
         }
 
@@ -2243,7 +2275,7 @@ namespace JinChanChanTool
         {
             var form = new EquipmentDataEditorForm(_iLocalizationService);
             form.Owner = this;// 设置父窗口，这样配置窗口会显示在主窗口上方但不会阻止主窗口
-            form.TopMost = true;// 确保窗口在最前面
+            form.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             form.Show();// 显示窗口
         }
         #endregion

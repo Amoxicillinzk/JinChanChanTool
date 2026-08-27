@@ -52,6 +52,7 @@ namespace JinChanChanTool
             InitializeComponent();
             _manualSettingsService = manualSettingsService;
             _iLocalizationService = iLocalizationService;
+            TopMost = _manualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             //添加拖动
             DragHelper.EnableDragForChildren(panel_标题栏);
             //应用本地化
@@ -387,6 +388,7 @@ namespace JinChanChanTool
             // 2. 创建并显示进程选择窗体
             using (var processForm = new ProcessSelectorForm(discoveryService, _iLocalizationService))
             {
+                processForm.TopMost = _manualSettingsService.CurrentConfig.IsAllWindowsTopMost;
                 if (processForm.ShowDialog(this) == DialogResult.OK)
                 {
                     var selectedProcess = processForm.SelectedProcess;
@@ -442,7 +444,7 @@ namespace JinChanChanTool
 
         private async void roundedButton_设置英雄名称坐标_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _manualSettingsService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {
@@ -482,7 +484,7 @@ namespace JinChanChanTool
 
         private async void roundedButton_设置刷新按钮坐标_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _manualSettingsService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {
@@ -501,7 +503,7 @@ namespace JinChanChanTool
 
         private async void roundedButton_设置高亮提示坐标_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _manualSettingsService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {

@@ -32,11 +32,13 @@ namespace JinChanChanTool.Services.ManuallySetCoordinates
 
         // 本地化服务
         private readonly ILocalizationService _iLocalizationService;
+        private readonly bool _isTopMost;
 
-        public FastSettingPositionService(Screen screen, ILocalizationService iLocalizationService)
+        public FastSettingPositionService(Screen screen, ILocalizationService iLocalizationService, bool isTopMost = true)
         {
             targetScreen = screen;
             _iLocalizationService = iLocalizationService;
+            _isTopMost = isTopMost;
             InitializeComponents();
         }
 
@@ -52,7 +54,7 @@ namespace JinChanChanTool.Services.ManuallySetCoordinates
                 WindowState = FormWindowState.Maximized,// 设置为最大化窗体，覆盖整个屏幕
                 ShowInTaskbar = false,// 不显示在任务栏
                 ControlBox = false,// 禁用控制框
-                TopMost = true,// 确保在最上层
+                TopMost = _isTopMost,
                 Opacity = 0.5// 设置透明度为 0.5
             };
 
@@ -71,7 +73,7 @@ namespace JinChanChanTool.Services.ManuallySetCoordinates
                 WindowState = FormWindowState.Normal,// 正常状态，避免最大化
                 ShowInTaskbar = false,// 不显示在任务栏
                 ControlBox = false,// 禁用控制框
-                TopMost = true,// 确保在最上层
+                TopMost = _isTopMost,
                 Size = new Size(700, 30),
                 Owner = overlayForm// 设置 overlayForm 为 labelForm 的父窗体
             };

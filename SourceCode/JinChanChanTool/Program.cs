@@ -64,6 +64,7 @@ namespace JinChanChanTool
             // 展示输出窗口
             OutputForm.Instance.InitializeLocalization(_iLocalizationService);
             OutputForm.Instance.InitializeObject(_iAutomaticSettingsService);
+            OutputForm.Instance.TopMost = _iManualSettingsService.CurrentConfig.IsAllWindowsTopMost;
             OutputForm.Instance.Show();
             if (!_iManualSettingsService.CurrentConfig.IsUseOutputForm)
             {

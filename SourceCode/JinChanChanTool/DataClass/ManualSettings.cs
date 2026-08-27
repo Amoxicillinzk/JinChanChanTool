@@ -346,6 +346,11 @@
         public string Language { get; set; }
 
         /// <summary>
+        /// 是否将应用的所有窗口置于其他窗口之上
+        /// </summary>
+        public bool IsAllWindowsTopMost { get; set; }
+
+        /// <summary>
         /// 阵容容量（可选择的英雄数量），范围：10-20
         /// </summary>
         public int LineUpCapacity { get; set; }
@@ -423,6 +428,7 @@
             HighlightBorderWidth = 3;
             HighlightGradientSpeed = 0.05f;
             Language = "zh-CN";
+            IsAllWindowsTopMost = true;
             LineUpCapacity = 10;
 
         }
@@ -503,6 +509,7 @@
                 HighlightBorderWidth = this.HighlightBorderWidth,
                 HighlightGradientSpeed = this.HighlightGradientSpeed,
                 Language = this.Language,
+                IsAllWindowsTopMost = this.IsAllWindowsTopMost,
                 LineUpCapacity = this.LineUpCapacity,
             };
         }
@@ -585,6 +592,7 @@
                    HighlightBorderWidth == other.HighlightBorderWidth &&
                    HighlightGradientSpeed == other.HighlightGradientSpeed &&
                    Language == other.Language &&
+                   IsAllWindowsTopMost == other.IsAllWindowsTopMost &&
                    LineUpCapacity == other.LineUpCapacity;
         }
 

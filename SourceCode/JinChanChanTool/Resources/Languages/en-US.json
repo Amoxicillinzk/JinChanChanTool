@@ -110,6 +110,8 @@
   "SettingForm.Tab.功能.自动刷新商店.延迟": "Delay",
   "SettingForm.Label.界面语言": "Interface Language",
   "SettingForm.Label.界面语言描述": "Select the display language for the application interface",
+  "SettingForm.Label.所有窗口置顶": "Keep All Windows on Top",
+  "SettingForm.Label.所有窗口置顶描述": "Keep all application windows above other windows",
   "SettingForm.Label.阵容容量": "Lineup Capacity",
   "SettingForm.Label.阵容容量描述": "Set the maximum number of heroes that can be displayed in lineup area and bench (10-20).",
   "SettingForm.Label.快捷键.召出隐藏窗口": "Show/Hide Window",

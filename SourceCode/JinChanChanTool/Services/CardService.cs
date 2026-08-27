@@ -146,6 +146,7 @@ namespace JinChanChanTool.Services
             );
 
             // 显示高亮覆盖层窗体
+            CardHighlightOverlayForm.Instance.TopMost = _iappConfigService.CurrentConfig.IsAllWindowsTopMost;
             CardHighlightOverlayForm.Instance.ShowOverlay();
             // 启动循环任务
             Task.Run(() => ProcessLoop_HighLight(ctsHighLight.Token), ctsHighLight.Token);

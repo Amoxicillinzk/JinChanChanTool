@@ -161,6 +161,7 @@ namespace JinChanChanTool
             UpdateProcessSelectionControls();
 
             capsuleSwitch_避免程序与用户争夺光标控制权.IsOn = _iappConfigService.CurrentConfig.IsHighUserPriority;
+            capsuleSwitch_所有窗口置顶.IsOn = _iappConfigService.CurrentConfig.IsAllWindowsTopMost;
 
             capsuleSwitch_自动停止拿牌.IsOn = _iappConfigService.CurrentConfig.IsAutomaticStopHeroPurchase;
             capsuleSwitch_刷新失败时自动停止刷新商店.IsOn = _iappConfigService.CurrentConfig.IsAutomaticStopRefreshStore;
@@ -261,6 +262,7 @@ namespace JinChanChanTool
             radioButton_自动设置坐标.CheckedChanged += radioButton_自动设置坐标_CheckedChanged;
 
             capsuleSwitch_自动识别进程.IsOnChanged += capsuleSwitch_自动识别进程_IsOnChanged;
+            capsuleSwitch_所有窗口置顶.IsOnChanged += capsuleSwitch_所有窗口置顶_IsOnChanged;
 
             textBox_拿牌按键1.KeyDown += TextBox6_KeyDown;
             textBox_拿牌按键1.Enter += TextBox_Enter;
@@ -710,6 +712,14 @@ namespace JinChanChanTool
 
         #region 功能
         #region 常规
+        /// <summary>
+        /// 当“所有窗口置顶”开关状态改变时触发。
+        /// </summary>
+        private void capsuleSwitch_所有窗口置顶_IsOnChanged(object sender, EventArgs e)
+        {
+            _iappConfigService.CurrentConfig.IsAllWindowsTopMost = capsuleSwitch_所有窗口置顶.IsOn;
+        }
+
         #region 避免程序与用户争夺光标控制权            
 
 
@@ -1378,7 +1388,7 @@ namespace JinChanChanTool
         /// <param name="e"></param>
         private async void roundedButton1_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _iappConfigService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {
@@ -1422,7 +1432,7 @@ namespace JinChanChanTool
         /// <param name="e"></param>
         private async void roundedButton2_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _iappConfigService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {
@@ -1443,7 +1453,7 @@ namespace JinChanChanTool
         /// <param name="e"></param>
         private async void roundedButton3_Click(object sender, EventArgs e)
         {
-            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService))
+            using (var setter = new FastSettingPositionService(targetScreen, _iLocalizationService, _iappConfigService.CurrentConfig.IsAllWindowsTopMost))
             {
                 try
                 {
@@ -1495,6 +1505,7 @@ namespace JinChanChanTool
             // 2. 创建并显示进程选择窗体
             using (var processForm = new ProcessSelectorForm(discoveryService, _iLocalizationService))
             {
+                processForm.TopMost = _iappConfigService.CurrentConfig.IsAllWindowsTopMost;
                 if (processForm.ShowDialog(this) == DialogResult.OK)
                 {
                     var selectedProcess = processForm.SelectedProcess;
@@ -1524,7 +1535,7 @@ namespace JinChanChanTool
         {
             var form = new CorrectionEditorForm(_iappConfigService, _iLocalizationService);
             form.Owner = this;// 设置父窗口，这样配置窗口会显示在主窗口上方但不会阻止主窗口
-            form.TopMost = true;// 确保窗口在最前面
+            form.TopMost = _iappConfigService.CurrentConfig.IsAllWindowsTopMost;
             form.Show();// 显示窗口
         }
         #endregion
@@ -2049,6 +2060,8 @@ namespace JinChanChanTool
             // 常规选项卡
             label_界面语言.Text = _iLocalizationService.Get("SettingForm.Label.界面语言");
             label_界面语言描述.Text = _iLocalizationService.Get("SettingForm.Label.界面语言描述");
+            label_所有窗口置顶.Text = _iLocalizationService.Get("SettingForm.Label.所有窗口置顶");
+            label_所有窗口置顶描述.Text = _iLocalizationService.Get("SettingForm.Label.所有窗口置顶描述");
             label_阵容容量.Text = _iLocalizationService.Get("SettingForm.Label.阵容容量");
             label_阵容容量描述.Text = _iLocalizationService.Get("SettingForm.Label.阵容容量描述");
 
