@@ -163,6 +163,8 @@ namespace JinChanChanTool
 
             #region 游戏窗口捕获服务对象实例化并绑定事件
             _windowInteractionService = new WindowInteractionService();
+            _windowInteractionService.TargetWindowGeometryChanged += WindowInteractionService_TargetWindowGeometryChanged;
+            _windowInteractionService.TargetWindowInvalidated += WindowInteractionService_TargetWindowInvalidated;
             _coordService = new CoordinateCalculationService(_windowInteractionService);
             _automationService = new AutomationService(_windowInteractionService, _coordService);
             #endregion
@@ -309,6 +311,24 @@ namespace JinChanChanTool
             //{
             //    Debug.WriteLine(f.ToString());
             //}
+
+            if (e.ChangedFields.Contains("IsUseDynamicCoordinates") ||
+                e.ChangedFields.Contains("IsAutoDetectTargetProcess") ||
+                e.ChangedFields.Contains("TargetProcessName") ||
+                e.ChangedFields.Contains("TargetProcessId"))
+            {
+                _trackedDynamicCoordinateProcess = null;
+                _automationService.SetTargetProcess(null);
+
+                if (_iManualSettingsService.CurrentConfig.IsUseDynamicCoordinates)
+                {
+                    timer_更新坐标.Start();
+                }
+                else
+                {
+                    timer_更新坐标.Stop();
+                }
+            }
 
             //如果变更的是快捷键，则重新注册快捷键
             if (e.ChangedFields.Contains("HotKey1") ||
@@ -2050,97 +2070,137 @@ namespace JinChanChanTool
         private readonly CoordinateCalculationService _coordService;// 用于计算坐标的服务
         private readonly AutomationService _automationService;// 用于自动化操作的服务
         private bool _multiProcessWarningShown = false;// 用于防止多进程冲突警告重复弹出
+        private Process? _trackedDynamicCoordinateProcess;// 已锁定的动态坐标窗口进程
+        private int _dynamicCoordinateEventQueued;
+        private bool _isDynamicCoordinateDiscoveryInProgress;
 
         /// <summary>
         /// 定时器触发——>更新动态坐标
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void timer_UpdateCoordinates_Tick(object sender, EventArgs e)
+        private async void timer_UpdateCoordinates_Tick(object sender, EventArgs e)
         {
             // 1. 检查是否处于自动模式
             if (!_iManualSettingsService.CurrentConfig.IsUseDynamicCoordinates)
             {
-                _automationService.SetTargetProcess(null);
+                if (_trackedDynamicCoordinateProcess != null || _automationService.IsGameDetected)
+                {
+                    _trackedDynamicCoordinateProcess = null;
+                    _automationService.SetTargetProcess(null);
+                }
+                timer_更新坐标.Stop();
                 return;
             }
 
             Process? targetProcess = null;
+            bool targetWindowRefreshed = false;
 
-            if (_iManualSettingsService.CurrentConfig.IsAutoDetectTargetProcess)
+            // 已锁定的窗口只刷新窗口客户区信息，不再重复枚举全部进程。
+            if (_trackedDynamicCoordinateProcess != null &&
+                IsTrackedProcessConfigurationMatch(_trackedDynamicCoordinateProcess) &&
+                IsDynamicCoordinateProcessAlive(_trackedDynamicCoordinateProcess))
             {
-                var discoveryService = new ProcessDiscoveryService();
-                if (!discoveryService.TryGetAutoDetectedProcess(out targetProcess, out string ambiguousProcessName))
+                if (_automationService.TryRefreshTargetWindow(out bool geometryChanged))
                 {
-                    _automationService.SetTargetProcess(null);
-                    ShowMultiProcessWarning(ambiguousProcessName);
+                    if (!geometryChanged)
+                    {
+                        return;
+                    }
+
+                    targetProcess = _trackedDynamicCoordinateProcess;
+                    targetWindowRefreshed = true;
+                }
+                else
+                {
+                    _trackedDynamicCoordinateProcess = null;
+                }
+            }
+
+            if (_trackedDynamicCoordinateProcess != null && targetProcess == null)
+            {
+                _trackedDynamicCoordinateProcess = null;
+                _automationService.SetTargetProcess(null);
+            }
+
+            if (targetProcess == null)
+            {
+                if (_isDynamicCoordinateDiscoveryInProgress)
+                {
                     return;
                 }
 
-                if (targetProcess != null)
+                _isDynamicCoordinateDiscoveryInProgress = true;
+                try
                 {
-                    _iManualSettingsService.CurrentConfig.TargetProcessName = targetProcess.ProcessName;
-                    _iManualSettingsService.CurrentConfig.TargetProcessId = targetProcess.Id;
+                    if (_iManualSettingsService.CurrentConfig.IsAutoDetectTargetProcess)
+                    {
+                        var result = await Task.Run(() =>
+                        {
+                            var discoveryService = new ProcessDiscoveryService();
+                            bool found = discoveryService.TryGetAutoDetectedProcess(out Process? process, out string ambiguousName);
+                            return (Found: found, Process: process, AmbiguousName: ambiguousName);
+                        });
+
+                        if (!result.Found)
+                        {
+                            _automationService.SetTargetProcess(null);
+                            ShowMultiProcessWarning(result.AmbiguousName);
+                            return;
+                        }
+
+                        targetProcess = result.Process;
+                        if (targetProcess != null)
+                        {
+                            _iManualSettingsService.CurrentConfig.TargetProcessName = targetProcess.ProcessName;
+                            _iManualSettingsService.CurrentConfig.TargetProcessId = targetProcess.Id;
+                        }
+                    }
+                    else
+                    {
+                        int targetId = _iManualSettingsService.CurrentConfig.TargetProcessId;
+                        string targetName = _iManualSettingsService.CurrentConfig.TargetProcessName;
+                        var result = await Task.Run(() => FindManualDynamicCoordinateProcess(targetId, targetName));
+
+                        if (result.ClearTargetProcessId)
+                        {
+                            _iManualSettingsService.CurrentConfig.TargetProcessId = 0;
+                        }
+
+                        if (!string.IsNullOrEmpty(result.AmbiguousName))
+                        {
+                            _automationService.SetTargetProcess(null);
+                            ShowMultiProcessWarning(result.AmbiguousName);
+                            return;
+                        }
+
+                        targetProcess = result.TargetProcess;
+                        if (targetProcess != null)
+                        {
+                            _iManualSettingsService.CurrentConfig.TargetProcessId = targetProcess.Id;
+                        }
+                    }
                 }
+                finally
+                {
+                    _isDynamicCoordinateDiscoveryInProgress = false;
+                }
+            }
+
+            // 4. 将新发现的窗口交给 AutomationService；已刷新窗口时无需重复绑定
+            if (!targetWindowRefreshed && (targetProcess != null || _automationService.IsGameDetected))
+            {
+                _automationService.SetTargetProcess(targetProcess);
+            }
+
+            if (_automationService.IsGameDetected && targetProcess != null)
+            {
+                _trackedDynamicCoordinateProcess = targetProcess;
             }
             else
             {
-                bool processFound = false;
-                Process[]? processesByName = null; // 用于按名称查找的结果
-
-                // 2.【ID】使用Process.GetProcesses()获取当前的系统进程快照，然后用irstOrDefault(p => p.Id == targetId)在这个快照中查找ID匹配的进程
-                //    如果找到了，它会返回那个 Process 对象；如果没找到（因为进程已经关闭），它只会返回 null，而不会抛出任何异常。
-                int targetId = _iManualSettingsService.CurrentConfig.TargetProcessId;
-                if (targetId > 0)
-                {
-                    // 获取当前所有进程的快照，然后从中查找
-                    Process? pById = Process.GetProcesses().FirstOrDefault(p => p.Id == targetId);
-
-                    // 检查是否找到了进程，并且进程名是否匹配
-                    if (pById != null && pById.ProcessName.Equals(_iManualSettingsService.CurrentConfig.TargetProcessName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        targetProcess = pById;
-                        processFound = true;
-                    }
-                    else
-                    {
-                        // 如果没找到，或进程名不匹配（PID被重用），则清除ID
-                        _iManualSettingsService.CurrentConfig.TargetProcessId = 0;
-                    }
-                }
-
-                // 3.【名称】如果按ID查找失败，则回退到按名称查找
-                if (!processFound)
-                {
-                    string targetName = _iManualSettingsService.CurrentConfig.TargetProcessName;
-                    if (string.IsNullOrEmpty(targetName))
-                    {
-                        _automationService.SetTargetProcess(null);
-                        return;
-                    }
-
-                    processesByName = Process.GetProcessesByName(targetName);
-
-                    if (processesByName.Length == 1)
-                    {
-                        targetProcess = processesByName[0];
-                        _iManualSettingsService.CurrentConfig.TargetProcessId = targetProcess.Id;
-                    }
-                    else if (processesByName.Length > 1)
-                    {
-                        _automationService.SetTargetProcess(null);
-                        ShowMultiProcessWarning(targetName);
-                        return;
-                    }
-                    else
-                    {
-                        targetProcess = null;
-                    }
-                }
+                _trackedDynamicCoordinateProcess = null;
             }
-
-            // 4. 将最终确定的目标（或null）交给 AutomationService
-            _automationService.SetTargetProcess(targetProcess);
 
             // 5. 重置多进程警告标志
             _multiProcessWarningShown = false;
@@ -2207,7 +2267,113 @@ namespace JinChanChanTool
                 {
                     _iAutomaticSettingsService.CurrentConfig.HighLightRectangle_5 = (Rectangle)rectHighLight5;
                 }
+
+                // 锁定后由窗口事件通知移动和缩放，稳定运行时不再轮询游戏窗口。
+                timer_更新坐标.Stop();
             }
+        }
+
+        private void WindowInteractionService_TargetWindowGeometryChanged(object? sender, EventArgs e)
+        {
+            if (IsDisposed || !IsHandleCreated ||
+                !_iManualSettingsService.CurrentConfig.IsUseDynamicCoordinates ||
+                Interlocked.Exchange(ref _dynamicCoordinateEventQueued, 1) != 0)
+            {
+                return;
+            }
+
+            BeginInvoke((MethodInvoker)(() =>
+            {
+                try
+                {
+                    timer_UpdateCoordinates_Tick(this, EventArgs.Empty);
+                }
+                finally
+                {
+                    Volatile.Write(ref _dynamicCoordinateEventQueued, 0);
+                }
+            }));
+        }
+
+        private void WindowInteractionService_TargetWindowInvalidated(object? sender, EventArgs e)
+        {
+            if (IsDisposed || !IsHandleCreated)
+            {
+                return;
+            }
+
+            BeginInvoke((MethodInvoker)(() =>
+            {
+                _trackedDynamicCoordinateProcess = null;
+                _automationService.SetTargetProcess(null);
+                if (_iManualSettingsService.CurrentConfig.IsUseDynamicCoordinates)
+                {
+                    timer_更新坐标.Start();
+                }
+            }));
+        }
+
+        private static bool IsDynamicCoordinateProcessAlive(Process process)
+        {
+            try
+            {
+                return !process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static (Process? TargetProcess, bool ClearTargetProcessId, string AmbiguousName)
+            FindManualDynamicCoordinateProcess(int targetProcessId, string targetProcessName)
+        {
+            bool clearTargetProcessId = false;
+            if (targetProcessId > 0)
+            {
+                try
+                {
+                    Process process = Process.GetProcessById(targetProcessId);
+                    if (process.ProcessName.Equals(targetProcessName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (process, false, string.Empty);
+                    }
+                }
+                catch
+                {
+                    // 进程已退出或 PID 已不可用，继续按名称查找。
+                }
+
+                clearTargetProcessId = true;
+            }
+
+            if (string.IsNullOrEmpty(targetProcessName))
+            {
+                return (null, clearTargetProcessId, string.Empty);
+            }
+
+            Process[] processesByName = Process.GetProcessesByName(targetProcessName);
+            if (processesByName.Length == 1)
+            {
+                return (processesByName[0], clearTargetProcessId, string.Empty);
+            }
+
+            return processesByName.Length > 1
+                ? (null, clearTargetProcessId, targetProcessName)
+                : (null, clearTargetProcessId, string.Empty);
+        }
+
+        private bool IsTrackedProcessConfigurationMatch(Process process)
+        {
+            if (_iManualSettingsService.CurrentConfig.IsAutoDetectTargetProcess)
+            {
+                return true;
+            }
+
+            return process.Id == _iManualSettingsService.CurrentConfig.TargetProcessId &&
+                   process.ProcessName.Equals(
+                       _iManualSettingsService.CurrentConfig.TargetProcessName,
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         private void ShowMultiProcessWarning(string processName)

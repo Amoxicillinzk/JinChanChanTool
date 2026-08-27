@@ -92,8 +92,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             }
 
             // 检查进程名，决定使用哪种窗口查找策略
-            if (process.ProcessName.Equals("League of Legends", StringComparison.OrdinalIgnoreCase) ||
-                process.ProcessName.Equals("TFTTencentClient-Win64-Shipping", StringComparison.OrdinalIgnoreCase))
+            if (process.ProcessName.Equals("TFTTencentClient-Win64-Shipping", StringComparison.OrdinalIgnoreCase))
             {
                 // --- 对于云顶之弈，使用简单、直接的父窗口查找策略 ---
                 if (_windowInteractionService.SetTargetWindow(process))
@@ -129,6 +128,28 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
                     CurrentGameMode = GameMode.None;
                 }
             }
+        }
+
+        /// <summary>
+        /// 刷新当前 TFT 窗口的客户区信息，用于响应窗口移动或尺寸变化。
+        /// </summary>
+        /// <param name="geometryChanged">窗口位置或尺寸是否发生变化。</param>
+        /// <returns>当前目标窗口仍然有效时返回 true。</returns>
+        public bool TryRefreshTargetWindow(out bool geometryChanged)
+        {
+            geometryChanged = false;
+            if (!IsGameDetected)
+            {
+                return false;
+            }
+
+            if (!_windowInteractionService.TryRefreshTargetWindow(out geometryChanged))
+            {
+                CurrentGameMode = GameMode.None;
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
