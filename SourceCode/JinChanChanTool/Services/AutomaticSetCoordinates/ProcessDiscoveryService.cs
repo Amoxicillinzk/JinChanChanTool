@@ -7,9 +7,8 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
     /// </summary>
     public class ProcessDiscoveryService
     {
-        private static readonly string[] LeagueGameProcessNames =
+        private static readonly string[] TftGameProcessNames =
         {
-            "League of Legends",
             "TFTTencentClient-Win64-Shipping"
         };
 
@@ -57,16 +56,16 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             ambiguousProcessName = string.Empty;
 
             List<Process> candidates = GetAutoDetectableGameProcesses();
-            List<Process> leagueProcesses = candidates.Where(IsLeagueGameProcess).ToList();
-            if (leagueProcesses.Count == 1)
+            List<Process> tftProcesses = candidates.Where(IsTftGameProcess).ToList();
+            if (tftProcesses.Count == 1)
             {
-                targetProcess = leagueProcesses[0];
+                targetProcess = tftProcesses[0];
                 return true;
             }
 
-            if (leagueProcesses.Count > 1)
+            if (tftProcesses.Count > 1)
             {
-                ambiguousProcessName = LeagueGameProcessNames[0];
+                ambiguousProcessName = TftGameProcessNames[0];
                 return false;
             }
 
@@ -101,12 +100,12 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
 
         private static bool IsSupportedAutoDetectProcess(Process process)
         {
-            return IsLeagueGameProcess(process) || IsMumuProcess(process) || IsLdProcess(process);
+            return IsTftGameProcess(process) || IsMumuProcess(process) || IsLdProcess(process);
         }
 
-        private static bool IsLeagueGameProcess(Process process)
+        private static bool IsTftGameProcess(Process process)
         {
-            return LeagueGameProcessNames.Any(name =>
+            return TftGameProcessNames.Any(name =>
                 process.ProcessName.Equals(name, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -124,7 +123,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
 
         private static int GetAutoDetectPriority(Process process)
         {
-            if (IsLeagueGameProcess(process)) return 0;
+            if (IsTftGameProcess(process)) return 0;
             if (IsMumuProcess(process)) return 1;
             if (IsLdProcess(process)) return 2;
             return 3;

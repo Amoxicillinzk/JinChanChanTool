@@ -42,6 +42,10 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         private static extern bool IsWindowEnabled(nint hWnd);
 
         [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(nint hWnd);
+
+        [DllImport("user32.dll")]
         private static extern int GetWindowTextLength(nint hWnd);
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -70,6 +74,35 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern int GetClassName(nint hWnd, StringBuilder lpClassName, int nMaxCount);
 
+        private const uint EVENT_OBJECT_DESTROY = 0x8001;
+        private const uint EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
+        private const int OBJID_WINDOW = 0;
+        private const uint WINEVENT_OUTOFCONTEXT = 0;
+        private const uint WINEVENT_SKIPOWNPROCESS = 2;
+
+        private delegate void WinEventDelegate(
+            nint hWinEventHook,
+            uint eventType,
+            nint hWnd,
+            int idObject,
+            int idChild,
+            uint idEventThread,
+            uint dwmsEventTime);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern nint SetWinEventHook(
+            uint eventMin,
+            uint eventMax,
+            nint hmodWinEventProc,
+            WinEventDelegate lpfnWinEventProc,
+            uint idProcess,
+            uint idThread,
+            uint dwFlags);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWinEvent(nint hWinEventHook);
+
         #endregion
 
         #region 公开属性
@@ -82,8 +115,19 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         public bool IsWindowFound => WindowHandle != nint.Zero;
 
         private List<nint> _candidateChildren;
+        private readonly WinEventDelegate _winEventDelegate;
+        private nint _locationChangeHook;
+        private nint _destroyHook;
+
+        public event EventHandler? TargetWindowGeometryChanged;
+        public event EventHandler? TargetWindowInvalidated;
 
         #endregion
+
+        public WindowInteractionService()
+        {
+            _winEventDelegate = WinEventCallback;
+        }
 
         /// <summary>
         /// 根据用户选择的进程，设置其为主目标窗口并更新窗口信息。
@@ -92,8 +136,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// <returns>如果成功获取窗口信息，则返回true。</returns>
         public bool SetTargetWindow(Process? targetProcess)
         {
-            // 重置状态
-            WindowHandle = nint.Zero;
+            ClearTargetWindow();
             if (targetProcess == null || targetProcess.MainWindowHandle == nint.Zero)
             {
                 return false;
@@ -103,13 +146,45 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         }
 
         /// <summary>
+        /// 刷新当前目标窗口的客户区位置和尺寸。
+        /// 该操作用于检测窗口移动或缩放，避免重复枚举系统进程和重建窗口目标。
+        /// </summary>
+        /// <param name="geometryChanged">窗口客户区位置或尺寸是否发生变化。</param>
+        /// <returns>目标窗口仍然有效时返回 true。</returns>
+        public bool TryRefreshTargetWindow(out bool geometryChanged)
+        {
+            geometryChanged = false;
+            if (WindowHandle == nint.Zero || !IsWindow(WindowHandle))
+            {
+                ClearTargetWindow();
+                return false;
+            }
+
+            int oldClientX = ClientX;
+            int oldClientY = ClientY;
+            int oldClientWidth = ClientWidth;
+            int oldClientHeight = ClientHeight;
+
+            if (!UpdateWindowInfo(WindowHandle))
+            {
+                return false;
+            }
+
+            geometryChanged = oldClientX != ClientX ||
+                              oldClientY != ClientY ||
+                              oldClientWidth != ClientWidth ||
+                              oldClientHeight != ClientHeight;
+            return true;
+        }
+
+        /// <summary>
         /// 设置目标窗口为雷电模拟器内的游戏渲染窗口。
         /// </summary>
         /// <param name="parentProcess"></param>
         /// <returns></returns>
         public bool SetTargetToLdPlayerGameWindow(Process? parentProcess)
         {
-            WindowHandle = nint.Zero;
+            ClearTargetWindow();
             if (parentProcess == null)
             {
                 return false;
@@ -161,7 +236,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// <returns></returns>
         public bool SetTargetToBestChildWindow(Process? parentProcess)
         {
-            WindowHandle = nint.Zero;
+            ClearTargetWindow();
             if (parentProcess == null || parentProcess.MainWindowHandle == nint.Zero)
             {
                 //Debug.WriteLine("[日志] 失敗：传入的父进程为null或没有主窗口。");
@@ -270,10 +345,105 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         private bool SetTargetWindowHandle(nint hWnd)
         {
             WindowHandle = hWnd;
+            if (!UpdateWindowInfo(hWnd))
+            {
+                return false;
+            }
+
+            RegisterTargetWindowHooks(hWnd);
+            return true;
+        }
+
+        private void RegisterTargetWindowHooks(nint hWnd)
+        {
+            UnregisterTargetWindowHooks();
+            GetWindowThreadProcessId(hWnd, out uint processId);
+            if (processId == 0)
+            {
+                return;
+            }
+
+            _locationChangeHook = SetWinEventHook(
+                EVENT_OBJECT_LOCATIONCHANGE,
+                EVENT_OBJECT_LOCATIONCHANGE,
+                nint.Zero,
+                _winEventDelegate,
+                processId,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            _destroyHook = SetWinEventHook(
+                EVENT_OBJECT_DESTROY,
+                EVENT_OBJECT_DESTROY,
+                nint.Zero,
+                _winEventDelegate,
+                processId,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        }
+
+        private void UnregisterTargetWindowHooks()
+        {
+            if (_locationChangeHook != nint.Zero)
+            {
+                UnhookWinEvent(_locationChangeHook);
+                _locationChangeHook = nint.Zero;
+            }
+
+            if (_destroyHook != nint.Zero)
+            {
+                UnhookWinEvent(_destroyHook);
+                _destroyHook = nint.Zero;
+            }
+        }
+
+        private void ClearTargetWindow()
+        {
+            UnregisterTargetWindowHooks();
+            WindowHandle = nint.Zero;
+            ClientX = 0;
+            ClientY = 0;
+            ClientWidth = 0;
+            ClientHeight = 0;
+        }
+
+        private void WinEventCallback(
+            nint hWinEventHook,
+            uint eventType,
+            nint hWnd,
+            int idObject,
+            int idChild,
+            uint idEventThread,
+            uint dwmsEventTime)
+        {
+            if (hWnd != WindowHandle || idObject != OBJID_WINDOW || idChild != 0)
+            {
+                return;
+            }
+
+            if (eventType == EVENT_OBJECT_DESTROY)
+            {
+                TargetWindowInvalidated?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
+            if (eventType == EVENT_OBJECT_LOCATIONCHANGE)
+            {
+                TargetWindowGeometryChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        private bool UpdateWindowInfo(nint hWnd)
+        {
+            if (hWnd == nint.Zero)
+            {
+                WindowHandle = nint.Zero;
+                return false;
+            }
+
             if (!GetClientRect(WindowHandle, out RECT clientRect))
             {
                 //Debug.WriteLine("[日志] 致命错误：GetClientRect 失败！");
-                WindowHandle = nint.Zero;
+                ClearTargetWindow();
                 return false;
             }
 
@@ -284,7 +454,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             if (!ClientToScreen(WindowHandle, ref clientTopLeft))
             {
                 //Debug.WriteLine("[日志] 致命错误：ClientToScreen 失败！");
-                WindowHandle = nint.Zero;
+                ClearTargetWindow();
                 return false;
             }
 
