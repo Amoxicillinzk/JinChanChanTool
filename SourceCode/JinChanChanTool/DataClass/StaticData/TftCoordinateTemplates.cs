@@ -18,68 +18,68 @@ namespace JinChanChanTool.DataClass.StaticData
         /// <summary>
         /// 商店购买经验值按钮
         /// </summary>
-        public static readonly AnchorProfile ExperienceButton = new(-595, -120, 170, 50);
+        public static readonly AnchorProfile ExperienceButton = new(-525, -120, 170, 50);
 
         /// <summary>
         /// 商店刷新按钮
         /// </summary>
-        public static readonly AnchorProfile RefreshButton = new(-597.5, -47.5, 175, 55);
+        public static readonly AnchorProfile RefreshButton = new(-522.5, -47.5, 175, 55);
 
         /// <summary>
         /// 第一个英雄名字区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot1_Name = new(-415, -25, 120, 30);
+        public static readonly AnchorProfile CardSlot1_Name = new(-347, -25, 120, 30);
 
         /// <summary>
         /// 第二个英雄名字区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot2_Name = new(-217.5, -25, 115, 30);
+        public static readonly AnchorProfile CardSlot2_Name = new(-147.5, -25, 115, 30);
 
         /// <summary>
         /// 第三个英雄名字区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot3_Name = new(-10, -25, 130, 30);
+        public static readonly AnchorProfile CardSlot3_Name = new(62, -25, 130, 30);
 
         /// <summary>
         /// 第四个英雄名字区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot4_Name = new(185, -25, 120, 30);
+        public static readonly AnchorProfile CardSlot4_Name = new(259, -25, 120, 30);
 
         /// <summary>
         /// 第五个英雄名字区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot5_Name = new(390, -25, 130, 30);
+        public static readonly AnchorProfile CardSlot5_Name = new(466, -25, 130, 30);
 
         // --- 备用区域 ---
 
         /// <summary>
         /// 第一个卡槽的高亮/点击区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot1_Click = new(-384, -80.5, 191, 141);
+        public static readonly AnchorProfile CardSlot1_Click = new(-310.5, -80.5, 193, 141);
 
         /// <summary>
         /// 第二个卡槽的高亮/点击区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot2_Click = new(-183, -80.5, 191, 141);
+        public static readonly AnchorProfile CardSlot2_Click = new(-108.5, -80.5, 193, 141);
 
         /// <summary>
         /// 第三个卡槽的高亮/点击区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot3_Click = new(18, -80.5, 191, 141);
+        public static readonly AnchorProfile CardSlot3_Click = new(93.5, -80.5, 193, 141);
 
         /// <summary>
         /// 第四个卡槽的高亮/点击区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot4_Click = new(220, -80.5, 191, 141);
+        public static readonly AnchorProfile CardSlot4_Click = new(295.5, -80.5, 193, 141);
 
         /// <summary>
         /// 第五个卡槽的高亮/点击区域
         /// </summary>
-        public static readonly AnchorProfile CardSlot5_Click = new(422, -80.5, 191, 141);
+        public static readonly AnchorProfile CardSlot5_Click = new(497.5, -80.5, 193, 141);
 
         /// <summary>
         /// 金币数量识别区域
         /// </summary>
-        public static readonly AnchorProfile GoldAmount = new(22.5, -185, 65, 30);
+        public static readonly AnchorProfile GoldAmount = new(92.5, -185, 65, 30);
     }
 }

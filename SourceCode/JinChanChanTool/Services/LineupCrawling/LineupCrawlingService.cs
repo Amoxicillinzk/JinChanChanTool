@@ -30,6 +30,10 @@ namespace JinChanChanTool.Services.LineupCrawling
         /// </summary>
         private readonly ConcurrentDictionary<string, List<string>> _clusterHeroKeysMap = new();
 
+        private readonly HashSet<string> _localHeroNames;
+        private readonly HashSet<string> _localEquipmentNames;
+        private readonly string _targetSeason;
+
         // API 路由常量
         //private const string MetadataUrl = "https://api-hc.metatft.com/tft-comps-api/comps_data?queue=1100";
         //private const string StatsUrl = "https://api-hc.metatft.com/tft-comps-api/comps_stats?queue=1100&patch=current&days=1&rank=CHALLENGER,DIAMOND,GRANDMASTER,MASTER&permit_filter_adjustment=true";
@@ -42,9 +46,12 @@ namespace JinChanChanTool.Services.LineupCrawling
         private const string StatsUrl = ProxyHost + "/tft-comps-api/comps_stats?queue=1100&patch=current&days=1&rank=CHALLENGER,DIAMOND,GRANDMASTER,MASTER&permit_filter_adjustment=true";
         private const string DetailUrlBase = ProxyHost + "/tft-comps-api/comp_details?comp={0}&cluster_id={1}";
 
-        public LineupCrawlingService(RecommendedEquipment.DynamicGameDataService gameDataService)
+        public LineupCrawlingService(RecommendedEquipment.DynamicGameDataService gameDataService, string targetSeason)
         {
             _gameDataService = gameDataService;
+            _targetSeason = targetSeason;
+            _localHeroNames = LoadLocalNames("HeroData.json", "HeroName", _targetSeason);
+            _localEquipmentNames = LoadLocalNames("Equipment.json", "Name", _targetSeason);
         }
 
 
@@ -107,11 +114,16 @@ namespace JinChanChanTool.Services.LineupCrawling
 
                 // 处理 Units 和装备
                 var unitKeys = detail.UnitsString.Split(new[] { ", " }, StringSplitOptions.RemoveEmptyEntries).ToList();
-                _clusterHeroKeysMap[kvp.Key] = unitKeys;
+                var resolvedUnitKeys = new List<string>();
                 foreach (var uKey in unitKeys)
                 {
-                    string rawName = _gameDataService.HeroTranslations.GetValueOrDefault(uKey, uKey);
+                    string rawName = _gameDataService.GetHeroTranslation(uKey);
                     string heroName = rawName.Replace("·", "").Trim();
+                    if (heroName == uKey || !_localHeroNames.Contains(heroName))
+                    {
+                        Debug.WriteLine($"跳过未匹配本地英雄的阵容单位: {uKey} -> {heroName}");
+                        continue;
+                    }
 
                     // 匹配该棋子的推荐装备
                     var build = detail.Builds?.FirstOrDefault(b => b.Unit == uKey);
@@ -120,12 +132,19 @@ namespace JinChanChanTool.Services.LineupCrawling
                     {
                         for (int i = 0; i < Math.Min(3, build.BuildName.Count); i++)
                         {
-                            equips[i] = _gameDataService.ItemTranslations.GetValueOrDefault(build.BuildName[i], build.BuildName[i]);
+                            string equipmentName = _gameDataService.ItemTranslations.GetValueOrDefault(build.BuildName[i], build.BuildName[i]);
+                            equips[i] = _localEquipmentNames.Contains(equipmentName) ? equipmentName : string.Empty;
                         }
                     }
                     lineup.LineUpUnits.Add(new LineUpUnit(heroName, equips[0], equips[1], equips[2]));
+                    resolvedUnitKeys.Add(uKey);
                 }
-                results.Add(lineup);
+
+                if (lineup.LineUpUnits.Count > 0)
+                {
+                    _clusterHeroKeysMap[kvp.Key] = resolvedUnitKeys;
+                    results.Add(lineup);
+                }
             }
             return results;
         }
@@ -137,16 +156,31 @@ namespace JinChanChanTool.Services.LineupCrawling
             var nameParts = nameItems.Select(item =>
             {
                 // 根据 DTO 中的 Type 字段精准匹配字典
-                if (item.Type == "unit")
-                    return _gameDataService.HeroTranslations.GetValueOrDefault(item.Name, item.Name);
                 if (item.Type == "trait")
                     return _gameDataService.TraitTranslations.GetValueOrDefault(item.Name, item.Name);
+
+                string heroName = _gameDataService.GetHeroTranslation(item.Name);
+                if (heroName != item.Name)
+                    return heroName;
 
                 return item.Name; // 兜底返回原名
             });
 
             string rawName = string.Join(" ", nameParts);
             return rawName.Replace("·", "").Replace("  ", " ").Trim();
+        }
+
+        private static HashSet<string> LoadLocalNames(string fileName, string propertyName, string season)
+        {
+            string filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "HeroDatas", season, fileName);
+            if (!File.Exists(filePath)) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(filePath));
+            return document.RootElement
+                .EnumerateArray()
+                .Select(element => element.TryGetProperty(propertyName, out JsonElement property) ? property.GetString() : null)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
         #endregion
 
@@ -169,7 +203,7 @@ namespace JinChanChanTool.Services.LineupCrawling
             foreach (var lineup in metadata)
             {
                 var stat = stats.Results.FirstOrDefault(s => s.Cluster == lineup.Description); // Description 存的是 ClusterID
-                if (stat == null || stat.Count == 0) continue;
+                if (stat == null || stat.Count == 0 || stat.Places == null || stat.Places.Count < 8) continue;
 
                 double compCount = stat.Count;
 

@@ -5,6 +5,7 @@ using JinChanChanTool.Services.LineupCrawling;
 using JinChanChanTool.Services.Localization;
 using JinChanChanTool.Services.RecommendedEquipment;
 using JinChanChanTool.Services.RecommendedEquipment.Interface;
+using JinChanChanTool.Tools.LineUpCodeTools;
 using System.Diagnostics;
 namespace JinChanChanTool
 {
@@ -96,6 +97,12 @@ namespace JinChanChanTool
                 _iAutomaticSettingsService.Save();
             }
 
+            // 阵容码只维护主赛季字典，优先会读取随版本分发的缓存，如果缺失或者赛季不匹配时更新一次。
+            ILineUpCodeDictionaryService _iLineUpCodeDictionaryService = new LineUpCodeDictionaryService();
+            _iLineUpCodeDictionaryService.LoadMainSeasonDictionary(
+                _iAutomaticSettingsService.CurrentConfig.MainSeason);
+            ILineUpParser _iLineUpParser = new LineUpParser(_iLineUpCodeDictionaryService);
+
             _iheroDataService.SetFilePathsIndex(selectedSeason);
             _iheroDataService.Load();
 
@@ -125,11 +132,11 @@ namespace JinChanChanTool
             _iRecommendedLineUpService.Load();
 
             // 创建自动更新服务并启动后台检查
-            IAutoUpdateService _iAutoUpdateService = new AutoUpdateService(_iManualSettingsService, _iAutomaticSettingsService, _iHeroEquipmentDataService, _iRecommendedLineUpService);
+            IAutoUpdateService _iAutoUpdateService = new AutoUpdateService(_iManualSettingsService, _iAutomaticSettingsService, _iHeroEquipmentDataService, _iRecommendedLineUpService, _iLineUpCodeDictionaryService);
             _ = _iAutoUpdateService.CheckAndUpdateAsync();
 
             // 运行主窗体并传入应用设置服务
-            Application.Run(new MainForm(_iManualSettingsService,_iAutomaticSettingsService, _iLocalizationService, _iheroDataService, _iEquipmentService,  _iCorrectionService, _iLineUpService, _iHeroEquipmentDataService, _iRecommendedLineUpService));
+            Application.Run(new MainForm(_iManualSettingsService,_iAutomaticSettingsService, _iLocalizationService, _iheroDataService, _iEquipmentService,  _iCorrectionService, _iLineUpService, _iHeroEquipmentDataService, _iRecommendedLineUpService, _iLineUpParser, _iAutoUpdateService));
         }
 
         private static string ResolveSelectedSeason(

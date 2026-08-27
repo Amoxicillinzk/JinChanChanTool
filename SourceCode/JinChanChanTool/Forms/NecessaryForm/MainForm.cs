@@ -64,6 +64,16 @@ namespace JinChanChanTool
         private readonly IRecommendedLineUpService _iRecommendedLineUpService;
 
         /// <summary>
+        /// 阵容码解析服务实例
+        /// </summary>
+        private readonly ILineUpParser _iLineUpParser;
+
+        /// <summary>
+        /// 自动更新服务实例
+        /// </summary>
+        private readonly IAutoUpdateService _iAutoUpdateService;
+
+        /// <summary>
         /// 本地化服务实例
         /// </summary>
         private readonly ILocalizationService _iLocalizationService;
@@ -90,7 +100,7 @@ namespace JinChanChanTool
         /// </summary>
         private EquipmentInformationToolTip _lineUpFormEquipmentToolTip;
 
-        public MainForm(IManualSettingsService iManualSettingsService, IAutomaticSettingsService iAutomaticSettingsService, ILocalizationService iLocalizationService, IHeroDataService iheroDataService, IEquipmentService iEquipmentService, ICorrectionService iCorrectionService, ILineUpService iLineUpService, IHeroEquipmentDataService iHeroEquipmentDataService, IRecommendedLineUpService iRecommendedLineUpService)
+        public MainForm(IManualSettingsService iManualSettingsService, IAutomaticSettingsService iAutomaticSettingsService, ILocalizationService iLocalizationService, IHeroDataService iheroDataService, IEquipmentService iEquipmentService, ICorrectionService iCorrectionService, ILineUpService iLineUpService, IHeroEquipmentDataService iHeroEquipmentDataService, IRecommendedLineUpService iRecommendedLineUpService, ILineUpParser iLineUpParser, IAutoUpdateService iAutoUpdateService)
         {
             InitializeComponent();
             //添加拖动
@@ -135,6 +145,14 @@ namespace JinChanChanTool
 
             #region 推荐阵容数据服务实例化
             _iRecommendedLineUpService = iRecommendedLineUpService;
+            #endregion
+
+            #region 阵容码解析服务实例化
+            _iLineUpParser = iLineUpParser;
+            #endregion
+
+            #region 自动更新服务实例化
+            _iAutoUpdateService = iAutoUpdateService;
             #endregion
 
             #region UI构建服务实例化并构建UI并绑定事件           
@@ -238,6 +256,7 @@ namespace JinChanChanTool
             MouseHookTool.MouseLeftButtonDown += MouseHook_MouseLeftButtonDown;
             MouseHookTool.MouseLeftButtonUp += MouseHook_MouseLeftButtonUp;
             #endregion
+
         }
 
         private void _cardService_isOCRLoopChanged(bool obj)
@@ -1089,8 +1108,7 @@ namespace JinChanChanTool
             LoadLineUpsToComboBox();
             LoadLineUpToUI();
 
-            IAutoUpdateService autoUpdateService = new AutoUpdateService(_iManualSettingsService, _iAutomaticSettingsService, _iHeroEquipmentDataService, _iRecommendedLineUpService);
-            _ = autoUpdateService.CheckAndUpdateAsync();
+            _ = _iAutoUpdateService.CheckAndUpdateAsync();
         }
         #endregion
 
@@ -1707,6 +1725,8 @@ namespace JinChanChanTool
         /// <param name="e"></param>
         private void roundedButton3_Click(object sender, EventArgs e)
         {
+            if (!IsLineUpCodeAvailable()) return;
+
             string lineupCode = textBox_阵容码.Text.Trim();
             if (string.IsNullOrEmpty(lineupCode))
             {
@@ -1717,7 +1737,9 @@ namespace JinChanChanTool
             try
             {
                 List<string> heroNames;
-                heroNames = LineUpParser.ParseCode(lineupCode);
+                heroNames = _iLineUpParser.ParseCode(
+                    lineupCode,
+                    _iAutomaticSettingsService.CurrentConfig.SelectedSeason);
                 // 统一处理结果
                 if (heroNames != null && heroNames.Count > 0)
                 {
@@ -1751,6 +1773,8 @@ namespace JinChanChanTool
         {
             try
             {
+                if (!IsLineUpCodeAvailable()) return;
+
                 List<string> selectedHeroNames = new List<string>();
                 foreach (LineUpUnit unit in _iLineUpService.GetCurrentSubLineUp().LineUpUnits)
                 {
@@ -1771,7 +1795,9 @@ namespace JinChanChanTool
                 }
 
                 // 生成阵容码
-                string lineupCode = LineUpParser.GenerateCode(selectedHeroNames);
+                string lineupCode = _iLineUpParser.GenerateCode(
+                    selectedHeroNames,
+                    _iAutomaticSettingsService.CurrentConfig.SelectedSeason);
 
                 // 将生成的阵容码显示在文本框中
                 textBox_阵容码.Text = lineupCode;
@@ -1789,6 +1815,22 @@ namespace JinChanChanTool
             {
                 MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.导出失败", ex.Message), _iLocalizationService.Get("MainForm.MsgTitle.错误"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private bool IsLineUpCodeAvailable()
+        {
+            string selectedSeason = _iAutomaticSettingsService.CurrentConfig.SelectedSeason;
+            if (_iLineUpParser.IsAvailableForSeason(selectedSeason))
+            {
+                return true;
+            }
+
+            MessageBox.Show(
+                _iLocalizationService.Get("MainForm.Msg.阵容码仅主赛季"),
+                _iLocalizationService.Get("MainForm.MsgTitle.提示"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return false;
         }
 
         /// <summary>
