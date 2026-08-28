@@ -60,6 +60,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
     {
         private readonly WindowInteractionService _windowInteractionService;
         private readonly CoordinateCalculationService _coordService;
+        private bool _useLegacyTftTemplate;
 
         /// <summary>
         /// 当前检测到的游戏模式。
@@ -84,6 +85,8 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// <param name="process">用户选择的进程。</param>
         public void SetTargetProcess(Process? process)
         {
+            _useLegacyTftTemplate = false;
+
             if (process == null)
             {
                 _windowInteractionService.SetTargetWindow(null); // 清除目标
@@ -95,6 +98,10 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             if (process.ProcessName.Equals("TFTTencentClient-Win64-Shipping", StringComparison.OrdinalIgnoreCase) ||
                 process.ProcessName.Equals("League of Legends", StringComparison.OrdinalIgnoreCase))
             {
+                _useLegacyTftTemplate = process.ProcessName.Equals(
+                    "League of Legends",
+                    StringComparison.OrdinalIgnoreCase);
+
                 // --- 对于云顶之弈，使用简单、直接的父窗口查找策略 ---
                 if (_windowInteractionService.SetTargetWindow(process))
                 {
@@ -169,7 +176,9 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
             if (CurrentGameMode == GameMode.TFT)
             {
                 profile = GetTftProfile(element);
-                baseResolution = TftCoordinateTemplates.BaseResolution;
+                baseResolution = _useLegacyTftTemplate
+                    ? LegacyTftCoordinateTemplates.BaseResolution
+                    : TftCoordinateTemplates.BaseResolution;
             }
             else if (CurrentGameMode == GameMode.JCC_LD)
             {
@@ -194,6 +203,11 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// <exception cref="ArgumentOutOfRangeException"></exception>
         private AnchorProfile GetTftProfile(UiElement element)
         {
+            if (_useLegacyTftTemplate)
+            {
+                return GetLegacyTftProfile(element);
+            }
+
             switch (element)
             {
                 case UiElement.ExpButton: return TftCoordinateTemplates.ExperienceButton;
@@ -214,6 +228,37 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
                 case UiElement.CardSlot3_Highlight: return TftCoordinateTemplates.CardSlot3_Click;
                 case UiElement.CardSlot4_Highlight: return TftCoordinateTemplates.CardSlot4_Click;
                 case UiElement.CardSlot5_Highlight: return TftCoordinateTemplates.CardSlot5_Click;
+                default: throw new ArgumentOutOfRangeException(nameof(element), "未知的UI元素。");
+            }
+        }
+
+        private static AnchorProfile GetLegacyTftProfile(UiElement element)
+        {
+            switch (element)
+            {
+                case UiElement.ExpButton: return LegacyTftCoordinateTemplates.ExperienceButton;
+                case UiElement.RefreshButton: return LegacyTftCoordinateTemplates.RefreshButton;
+                case UiElement.CardSlot1_Name: return LegacyTftCoordinateTemplates.CardSlot1_Name;
+                case UiElement.CardSlot2_Name: return LegacyTftCoordinateTemplates.CardSlot2_Name;
+                case UiElement.CardSlot3_Name: return LegacyTftCoordinateTemplates.CardSlot3_Name;
+                case UiElement.CardSlot4_Name: return LegacyTftCoordinateTemplates.CardSlot4_Name;
+                case UiElement.CardSlot5_Name: return LegacyTftCoordinateTemplates.CardSlot5_Name;
+                case UiElement.CardSlot1_Click:
+                case UiElement.CardSlot1_Highlight:
+                    return LegacyTftCoordinateTemplates.CardSlot1_Click;
+                case UiElement.CardSlot2_Click:
+                case UiElement.CardSlot2_Highlight:
+                    return LegacyTftCoordinateTemplates.CardSlot2_Click;
+                case UiElement.CardSlot3_Click:
+                case UiElement.CardSlot3_Highlight:
+                    return LegacyTftCoordinateTemplates.CardSlot3_Click;
+                case UiElement.CardSlot4_Click:
+                case UiElement.CardSlot4_Highlight:
+                    return LegacyTftCoordinateTemplates.CardSlot4_Click;
+                case UiElement.CardSlot5_Click:
+                case UiElement.CardSlot5_Highlight:
+                    return LegacyTftCoordinateTemplates.CardSlot5_Click;
+                case UiElement.GoldAmount: return LegacyTftCoordinateTemplates.GoldAmount;
                 default: throw new ArgumentOutOfRangeException(nameof(element), "未知的UI元素。");
             }
         }
