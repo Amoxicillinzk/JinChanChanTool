@@ -9,7 +9,8 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
     {
         private static readonly string[] TftGameProcessNames =
         {
-            "TFTTencentClient-Win64-Shipping"
+            "TFTTencentClient-Win64-Shipping",
+            "League of Legends"
         };
 
         private static readonly string[] MumuGameProcessNames =
