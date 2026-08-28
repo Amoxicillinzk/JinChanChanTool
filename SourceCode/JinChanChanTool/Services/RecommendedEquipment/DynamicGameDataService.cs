@@ -119,6 +119,26 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         }
 
         /// <summary>
+        /// 获取指定赛季的阵容码字典数据。
+        /// 保持与推荐数据相同的代理地址和 HttpProvider 请求链路。
+        /// </summary>
+        public async Task<IReadOnlyDictionary<string, string>> GetLineUpCodeToNameAsync(string season)
+        {
+            string seasonNumber = new string((season ?? string.Empty).Where(char.IsDigit).ToArray());
+            if (string.IsNullOrWhiteSpace(seasonNumber))
+            {
+                throw new ArgumentException($"赛季标识“{season}”格式无效。", nameof(season));
+            }
+
+            string translationsUrl = $"{ProxyHost}/lookups/TFTSet{seasonNumber}_latest_zh_cn.json";
+            using var response = await HttpProvider.Client.GetAsync(translationsUrl, HttpCompletionOption.ResponseContentRead);
+            response.EnsureSuccessStatusCode();
+
+            string json = await response.Content.ReadAsStringAsync();
+            return ExtractLineUpCodeToName(json);
+        }
+
+        /// <summary>
         /// 解析通用翻译JSON，提取 common 节点下的标签翻译。
         /// </summary>
         private void ProcessGeneralTranslationData(string json)
@@ -223,10 +243,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            LineUpCodeToName = translatedUnits
-                .Where(unit => unit.ShopUnit && !string.IsNullOrWhiteSpace(unit.Code) && !string.IsNullOrWhiteSpace(unit.Name))
-                .GroupBy(unit => unit.Code, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.OrdinalIgnoreCase);
+            LineUpCodeToName = new Dictionary<string, string>(ExtractLineUpCodeToName(json), StringComparer.OrdinalIgnoreCase);
 
             _heroTranslationAliases = translatedUnits
                 .SelectMany(unit => new[] { unit.ApiName }
@@ -248,6 +265,31 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                 .ToDictionary(g => g.Key, g => g.First().Name);
 
             OutputForm.Instance.WriteLineOutputMessage($"已成功加载全量翻译数据（含 {TraitTranslations.Count} 条羁绊）。");
+        }
+
+        private static IReadOnlyDictionary<string, string> ExtractLineUpCodeToName(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("units", out JsonElement unitsElement) ||
+                unitsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException("翻译数据不包含有效的英雄列表。");
+            }
+
+            bool hasShopUnitProperty = unitsElement.EnumerateArray()
+                .Any(unit => unit.TryGetProperty("shopUnit", out _));
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            TranslationData? translationData = JsonSerializer.Deserialize<TranslationData>(json, options);
+            if (translationData?.Units == null)
+            {
+                throw new InvalidOperationException("未能正确解析阵容码字典数据。");
+            }
+
+            return translationData.Units
+                .Where(unit => !string.IsNullOrWhiteSpace(unit.Code) && !string.IsNullOrWhiteSpace(unit.Name))
+                .Where(unit => !hasShopUnitProperty || unit.ShopUnit)
+                .GroupBy(unit => unit.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.OrdinalIgnoreCase);
         }
 
         public string GetHeroTranslation(string apiName)

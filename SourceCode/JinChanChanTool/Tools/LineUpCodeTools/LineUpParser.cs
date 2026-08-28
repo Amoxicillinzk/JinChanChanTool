@@ -4,7 +4,7 @@ using System.Diagnostics;
 namespace JinChanChanTool.Tools.LineUpCodeTools
 {
     /// <summary>
-    /// 使用当前主赛季字典解析和生成阵容码。
+    /// 使用所选赛季字典解析和生成阵容码。
     /// </summary>
     public sealed class LineUpParser : ILineUpParser
     {
@@ -17,6 +17,11 @@ namespace JinChanChanTool.Tools.LineUpCodeTools
 
         public bool IsAvailableForSeason(string season)
         {
+            if (!string.Equals(_dictionaryService.LoadedSeason, season, StringComparison.OrdinalIgnoreCase))
+            {
+                _dictionaryService.LoadSeasonDictionary(season);
+            }
+
             return _dictionaryService.IsReady &&
                    string.Equals(_dictionaryService.LoadedSeason, season, StringComparison.OrdinalIgnoreCase);
         }
@@ -55,7 +60,7 @@ namespace JinChanChanTool.Tools.LineUpCodeTools
                 }
                 else
                 {
-                    Debug.WriteLine($"代码 '{chunk}' 无法在主赛季字典中识别。");
+                    Debug.WriteLine($"代码 '{chunk}' 无法在当前赛季字典中识别。");
                 }
             }
 

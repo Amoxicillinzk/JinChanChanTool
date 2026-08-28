@@ -1774,44 +1774,50 @@ namespace JinChanChanTool
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void roundedButton3_Click(object sender, EventArgs e)
+        private async void roundedButton3_Click(object sender, EventArgs e)
         {
-            if (!IsLineUpCodeAvailable()) return;
-
-            string lineupCode = textBox_阵容码.Text.Trim();
-            if (string.IsNullOrEmpty(lineupCode))
-            {
-                MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.请输入阵容码"), _iLocalizationService.Get("MainForm.MsgTitle.提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+            Control? trigger = sender as Control;
+            if (trigger != null) trigger.Enabled = false;
 
             try
             {
-                List<string> heroNames;
-                heroNames = _iLineUpParser.ParseCode(
-                    lineupCode,
-                    _iAutomaticSettingsService.CurrentConfig.SelectedSeason);
-                // 统一处理结果
-                if (heroNames != null && heroNames.Count > 0)
-                {
-                    _iLineUpService.ClearCurrentSubLineUp();
-                    List<LineUpUnit> units = new List<LineUpUnit>();
-                    foreach (string heroName in heroNames)
-                    {
-                        _iLineUpService.AddHero(heroName);
-                    }
+                if (!await EnsureLineUpCodeAvailableAsync()) return;
 
-                    MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析成功", heroNames.Count), _iLocalizationService.Get("MainForm.MsgTitle.成功"), MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                else
+                string lineupCode = textBox_阵容码.Text.Trim();
+                if (string.IsNullOrEmpty(lineupCode))
                 {
-                    MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析无英雄"), _iLocalizationService.Get("MainForm.MsgTitle.提示"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.请输入阵容码"), _iLocalizationService.Get("MainForm.MsgTitle.提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                try
+                {
+                    List<string> heroNames = _iLineUpParser.ParseCode(
+                        lineupCode,
+                        _iAutomaticSettingsService.CurrentConfig.SelectedSeason);
+                    if (heroNames.Count > 0)
+                    {
+                        _iLineUpService.ClearCurrentSubLineUp();
+                        foreach (string heroName in heroNames)
+                        {
+                            _iLineUpService.AddHero(heroName);
+                        }
+
+                        MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析成功", heroNames.Count), _iLocalizationService.Get("MainForm.MsgTitle.成功"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    else
+                    {
+                        MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析无英雄"), _iLocalizationService.Get("MainForm.MsgTitle.提示"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析失败", ex.Message), _iLocalizationService.Get("MainForm.MsgTitle.错误"), MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
-            catch (Exception ex)
+            finally
             {
-                // 捕获并显示任何在解析过程中可能发生的错误提示
-                MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.解析失败", ex.Message), _iLocalizationService.Get("MainForm.MsgTitle.错误"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (trigger != null) trigger.Enabled = true;
             }
         }
 
@@ -1820,11 +1826,14 @@ namespace JinChanChanTool
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void roundedButton1_Click(object sender, EventArgs e)
+        private async void roundedButton1_Click(object sender, EventArgs e)
         {
+            Control? trigger = sender as Control;
+            if (trigger != null) trigger.Enabled = false;
+
             try
             {
-                if (!IsLineUpCodeAvailable()) return;
+                if (!await EnsureLineUpCodeAvailableAsync()) return;
 
                 List<string> selectedHeroNames = new List<string>();
                 foreach (LineUpUnit unit in _iLineUpService.GetCurrentSubLineUp().LineUpUnits)
@@ -1866,9 +1875,13 @@ namespace JinChanChanTool
             {
                 MessageBox.Show(_iLocalizationService.Get("MainForm.Msg.导出失败", ex.Message), _iLocalizationService.Get("MainForm.MsgTitle.错误"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally
+            {
+                if (trigger != null) trigger.Enabled = true;
+            }
         }
 
-        private bool IsLineUpCodeAvailable()
+        private async Task<bool> EnsureLineUpCodeAvailableAsync()
         {
             string selectedSeason = _iAutomaticSettingsService.CurrentConfig.SelectedSeason;
             if (_iLineUpParser.IsAvailableForSeason(selectedSeason))
@@ -1876,8 +1889,14 @@ namespace JinChanChanTool
                 return true;
             }
 
+            bool isReady = await _iAutoUpdateService.EnsureLineUpCodeDictionaryAsync(selectedSeason);
+            if (isReady && _iLineUpParser.IsAvailableForSeason(selectedSeason))
+            {
+                return true;
+            }
+
             MessageBox.Show(
-                _iLocalizationService.Get("MainForm.Msg.阵容码仅主赛季"),
+                _iLocalizationService.Get("MainForm.Msg.阵容码字典不可用", selectedSeason),
                 _iLocalizationService.Get("MainForm.MsgTitle.提示"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);

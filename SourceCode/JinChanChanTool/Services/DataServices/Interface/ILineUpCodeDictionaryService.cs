@@ -1,7 +1,7 @@
 namespace JinChanChanTool.Services.DataServices.Interface
 {
     /// <summary>
-    /// 主赛季阵容码字典服务。
+    /// 阵容码字典服务。
     /// </summary>
     public interface ILineUpCodeDictionaryService
     {
@@ -10,8 +10,8 @@ namespace JinChanChanTool.Services.DataServices.Interface
         IReadOnlyDictionary<string, string> CodeToName { get; }
         IReadOnlyDictionary<string, string> NameToCode { get; }
 
-        bool LoadMainSeasonDictionary(string mainSeason);
-        bool NeedsUpdate(string mainSeason);
-        bool UpdateDataFromCrawling(string mainSeason, IReadOnlyDictionary<string, string> codeToName);
+        bool LoadSeasonDictionary(string season);
+        bool NeedsUpdate(string season);
+        bool UpdateDataFromCrawling(string season, IReadOnlyDictionary<string, string> codeToName);
     }
 }
