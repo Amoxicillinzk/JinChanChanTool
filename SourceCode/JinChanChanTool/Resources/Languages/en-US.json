@@ -46,6 +46,7 @@
   "MainForm.Msg.解析无英雄": "No champions could be parsed. Please check if the comp code is correct or complete.",
   "MainForm.Msg.解析失败": "Parse failed! Please make sure the comp code is correct.\n\nDetails: {0}",
   "MainForm.Msg.阵容码仅主赛季": "Comp code parsing is available only for the main set, and its dictionary is not ready.",
+  "MainForm.Msg.阵容码字典不可用": "The comp code dictionary for set {0} could not be loaded. Check the network and try again.",
   "MainForm.Msg.请先选择英雄": "Please select champions first!",
   "MainForm.Msg.导出成功": "Comp code exported!\nChampions exported: {0}{1}\nThe comp code has been copied to clipboard.",
   "MainForm.Msg.导出失败": "Failed to export comp code!\nError: {0}",

@@ -4,6 +4,7 @@ using JinChanChanTool.Services.DataServices.Interface;
 using JinChanChanTool.Services.LineupCrawling;
 using JinChanChanTool.Services.RecommendedEquipment;
 using JinChanChanTool.Services.RecommendedEquipment.Interface;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace JinChanChanTool.Services.DataServices
@@ -19,6 +20,7 @@ namespace JinChanChanTool.Services.DataServices
         private readonly IHeroEquipmentDataService _heroEquipmentDataService;
         private readonly IRecommendedLineUpService _recommendedLineUpService;
         private readonly ILineUpCodeDictionaryService _lineUpCodeDictionaryService;
+        private readonly ConcurrentDictionary<string, Task<bool>> _lineUpCodeDictionaryTasks = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// 构造函数
@@ -51,7 +53,8 @@ namespace JinChanChanTool.Services.DataServices
             if (!isMainSeason)
             {
                 OutputForm.Instance.WriteLineOutputMessage(
-                    $"当前选择的是非主赛季“{selectedSeason}”，仅使用本地推荐数据，不执行网络更新。");
+                    $"当前选择的是非主赛季“{selectedSeason}”，仅使用本地推荐数据；阵容码字典按需加载。");
+                _ = EnsureLineUpCodeDictionaryAsync(selectedSeason);
                 return;
             }
 
@@ -78,7 +81,7 @@ namespace JinChanChanTool.Services.DataServices
                 {
                     if (needsLineUpCodeDictionaryUpdate)
                     {
-                        await UpdateLineUpCodeDictionaryAsync(mainSeason);
+                        await EnsureLineUpCodeDictionaryAsync(mainSeason);
                     }
 
                     if (needsEquipmentUpdate)
@@ -103,32 +106,54 @@ namespace JinChanChanTool.Services.DataServices
         }
 
         /// <summary>
-        /// 更新主赛季阵容码字典，沿用动态游戏数据服务的网络请求链路。
+        /// 确保指定赛季的阵容码字典存在，沿用动态游戏数据服务的网络请求链路。
         /// </summary>
-        private async Task UpdateLineUpCodeDictionaryAsync(string targetSeason)
+        public Task<bool> EnsureLineUpCodeDictionaryAsync(string season)
+        {
+            if (_lineUpCodeDictionaryService.LoadSeasonDictionary(season))
+            {
+                return Task.FromResult(true);
+            }
+
+            Task<bool> task = _lineUpCodeDictionaryTasks.GetOrAdd(season, DownloadLineUpCodeDictionaryAsync);
+            _ = task.ContinueWith(completedTask =>
+            {
+                if (_lineUpCodeDictionaryTasks.TryGetValue(season, out Task<bool>? currentTask) &&
+                    ReferenceEquals(currentTask, completedTask))
+                {
+                    _lineUpCodeDictionaryTasks.TryRemove(season, out _);
+                }
+            }, TaskScheduler.Default);
+            return task;
+        }
+
+        private async Task<bool> DownloadLineUpCodeDictionaryAsync(string targetSeason)
         {
             try
             {
-                OutputForm.Instance.WriteLineOutputMessage("开始更新主赛季阵容码字典...");
+                OutputForm.Instance.WriteLineOutputMessage($"开始更新阵容码字典：{targetSeason}...");
 
                 DynamicGameDataService dynamicGameDataService = new DynamicGameDataService();
-                await dynamicGameDataService.InitializeAsync();
+                IReadOnlyDictionary<string, string> codeToName =
+                    await dynamicGameDataService.GetLineUpCodeToNameAsync(targetSeason);
 
-                if (_lineUpCodeDictionaryService.UpdateDataFromCrawling(
-                        targetSeason,
-                        dynamicGameDataService.LineUpCodeToName))
+                bool updated = _lineUpCodeDictionaryService.UpdateDataFromCrawling(targetSeason, codeToName);
+                if (updated)
                 {
                     OutputForm.Instance.WriteLineOutputMessage(
-                        $"主赛季阵容码字典更新成功，共 {dynamicGameDataService.LineUpCodeToName.Count} 个英雄。");
+                        $"阵容码字典更新成功：{targetSeason}，共 {_lineUpCodeDictionaryService.CodeToName.Count} 个英雄。");
                 }
                 else
                 {
-                    OutputForm.Instance.WriteLineOutputMessage("主赛季阵容码字典更新失败：没有有效的英雄编码。");
+                    OutputForm.Instance.WriteLineOutputMessage($"阵容码字典更新失败：{targetSeason} 没有有效的英雄编码。");
                 }
+
+                return updated;
             }
             catch (Exception ex)
             {
-                OutputForm.Instance.WriteLineOutputMessage($"主赛季阵容码字典更新失败: {ex.Message}");
+                OutputForm.Instance.WriteLineOutputMessage($"阵容码字典更新失败：{targetSeason}，{ex.Message}");
+                return false;
             }
         }
 

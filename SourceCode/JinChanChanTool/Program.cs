@@ -98,10 +98,9 @@ namespace JinChanChanTool
                 _iAutomaticSettingsService.Save();
             }
 
-            // 阵容码只维护主赛季字典，优先会读取随版本分发的缓存，如果缺失或者赛季不匹配时更新一次。
+            // 优先加载所选赛季随版本分发的阵容码字典，缺失时由后台更新服务补齐。
             ILineUpCodeDictionaryService _iLineUpCodeDictionaryService = new LineUpCodeDictionaryService();
-            _iLineUpCodeDictionaryService.LoadMainSeasonDictionary(
-                _iAutomaticSettingsService.CurrentConfig.MainSeason);
+            _iLineUpCodeDictionaryService.LoadSeasonDictionary(selectedSeason);
             ILineUpParser _iLineUpParser = new LineUpParser(_iLineUpCodeDictionaryService);
 
             _iheroDataService.SetFilePathsIndex(selectedSeason);
