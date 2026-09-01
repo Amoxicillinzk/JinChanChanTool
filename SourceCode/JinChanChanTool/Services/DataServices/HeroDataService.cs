@@ -141,6 +141,7 @@ namespace JinChanChanTool.Services.DataServices
         /// </summary>
         public void ReLoad()
         {
+            ReleaseImages();
             HeroDatas.Clear();
             //HeroImages.Clear();
             professions.Clear();
@@ -237,6 +238,8 @@ namespace JinChanChanTool.Services.DataServices
                 {
                     return true;
                 }
+                DisposeImage(hero.Image);
+                hero.Image = null;
                 HeroDatas.RemoveAt(index);
                 return true;
             }
@@ -402,6 +405,7 @@ namespace JinChanChanTool.Services.DataServices
         /// </summary>
         private void LoadFromJson()
         {
+            ReleaseImages();
             HeroDatas.Clear();
             if (paths.Length > 0 && pathIndex < paths.Length)
             {
@@ -494,9 +498,7 @@ namespace JinChanChanTool.Services.DataServices
                 try
                 {
                     string imagePath = Path.Combine(paths[pathIndex], "images", $"{HeroDatas[i].HeroName}.png");
-                    Image image = Image.FromFile(imagePath);
-                    //HeroImages.Add(image);
-                    HeroDatas[i].Image = new Bitmap(image);
+                    HeroDatas[i].Image = LoadImageCopy(imagePath);
                 }
                 catch
                 {
@@ -505,9 +507,7 @@ namespace JinChanChanTool.Services.DataServices
                     errors.AppendLine($"图片缺失：{HeroDatas[i].HeroName}.png");
                     try
                     {
-                        Image image = Image.FromFile(defaultImagePath);
-                        //HeroImages.Add(image);
-                        HeroDatas[i].Image = new Bitmap(image);
+                        HeroDatas[i].Image = LoadImageCopy(defaultImagePath);
                     }
                     catch
                     {
@@ -645,6 +645,32 @@ namespace JinChanChanTool.Services.DataServices
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct()
                 .ToList();
+        }
+
+        /// <summary>
+        /// 从文件加载图片副本，避免 Image.FromFile 持续锁定源文件。
+        /// </summary>
+        private static Bitmap LoadImageCopy(string filePath)
+        {
+            using Image source = Image.FromFile(filePath);
+            return new Bitmap(source);
+        }
+
+        /// <summary>
+        /// 释放当前服务持有的英雄图片。
+        /// </summary>
+        private void ReleaseImages()
+        {
+            foreach (Hero hero in HeroDatas)
+            {
+                DisposeImage(hero.Image);
+                hero.Image = null;
+            }
+        }
+
+        private static void DisposeImage(Image? image)
+        {
+            image?.Dispose();
         }
         #endregion
 

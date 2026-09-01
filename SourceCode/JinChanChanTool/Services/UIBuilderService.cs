@@ -904,6 +904,34 @@ namespace JinChanChanTool.Services
             SelectForm_CreateHeroPictureBox();//创建半透明英雄头像框 
         }
 
+        /// <summary>
+        /// 解除 UI 对当前赛季图片的引用。图片对象由数据服务统一释放。
+        /// </summary>
+        public void ClearSeasonImageReferences()
+        {
+            foreach (HeroPictureBox pictureBox in MainForm_HeroPictureBoxes)
+            {
+                pictureBox.Image = null;
+                pictureBox.Tag = null;
+            }
+
+            foreach (HeroPictureBox pictureBox in SelectForm_HeroPictureBoxes)
+            {
+                pictureBox.Image = null;
+                pictureBox.Tag = null;
+            }
+
+            foreach (HeroAndEquipmentPictureBox pictureBox in MainForm_HeroAndEquipmentPictureBoxes)
+            {
+                pictureBox.Clear();
+            }
+
+            foreach (HeroAndEquipmentPictureBox pictureBox in LineUpForm_HeroAndEquipmentPictureBoxes)
+            {
+                pictureBox.Clear();
+            }
+        }
+
         public Size GetHeroPictureBoxSize()
         {
             return MainForm_HeroPictureBoxSize;

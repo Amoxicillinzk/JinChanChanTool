@@ -163,6 +163,7 @@ namespace JinChanChanTool
             #endregion
 
             #region 游戏窗口捕获服务对象实例化并绑定事件
+            _processDiscoveryService = new ProcessDiscoveryService();
             _windowInteractionService = new WindowInteractionService();
             _windowInteractionService.TargetWindowGeometryChanged += WindowInteractionService_TargetWindowGeometryChanged;
             _windowInteractionService.TargetWindowInvalidated += WindowInteractionService_TargetWindowInvalidated;
@@ -276,6 +277,9 @@ namespace JinChanChanTool
         /// <param name="e"></param>      
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            timer_更新坐标.Stop();
+            _trackedDynamicCoordinateProcess = null;
+            _automationService.SetTargetProcess(null);
             GlobalHotkeyTool.Dispose();
             MouseHookTool.Dispose();
             base.OnFormClosing(e);
@@ -1122,6 +1126,10 @@ namespace JinChanChanTool
         /// <param name="e"></param>
         private void comboBox_HeroPool_SelectedIndexChanged(object sender, EventArgs e)
         {
+            _activeToolTip?.Dispose();
+            _activeToolTip = null;
+            _uiBuilderService.ClearSeasonImageReferences();
+
             _iAutomaticSettingsService.CurrentConfig.SelectedSeason = comboBox_赛季选择.Items[comboBox_赛季选择.SelectedIndex].ToString();
             _iAutomaticSettingsService.Save();
             _iheroDataService.SetFilePathsIndex(_iAutomaticSettingsService.CurrentConfig.SelectedSeason);
@@ -2120,8 +2128,9 @@ namespace JinChanChanTool
         private readonly WindowInteractionService _windowInteractionService;// 用于与窗口进行交互的服务
         private readonly CoordinateCalculationService _coordService;// 用于计算坐标的服务
         private readonly AutomationService _automationService;// 用于自动化操作的服务
+        private readonly ProcessDiscoveryService _processDiscoveryService;// 用于生成不持有系统句柄的进程快照
         private bool _multiProcessWarningShown = false;// 用于防止多进程冲突警告重复弹出
-        private Process? _trackedDynamicCoordinateProcess;// 已锁定的动态坐标窗口进程
+        private ProcessSnapshot? _trackedDynamicCoordinateProcess;// 已锁定的动态坐标窗口进程快照
         private int _dynamicCoordinateEventQueued;
         private bool _isDynamicCoordinateDiscoveryInProgress;
 
@@ -2144,7 +2153,7 @@ namespace JinChanChanTool
                 return;
             }
 
-            Process? targetProcess = null;
+            ProcessSnapshot? targetProcess = null;
             bool targetWindowRefreshed = false;
 
             // 已锁定的窗口只刷新窗口客户区信息，不再重复枚举全部进程。
@@ -2188,8 +2197,7 @@ namespace JinChanChanTool
                     {
                         var result = await Task.Run(() =>
                         {
-                            var discoveryService = new ProcessDiscoveryService();
-                            bool found = discoveryService.TryGetAutoDetectedProcess(out Process? process, out string ambiguousName);
+                            bool found = _processDiscoveryService.TryGetAutoDetectedProcess(out ProcessSnapshot? process, out string ambiguousName);
                             return (Found: found, Process: process, AmbiguousName: ambiguousName);
                         });
 
@@ -2364,37 +2372,25 @@ namespace JinChanChanTool
             }));
         }
 
-        private static bool IsDynamicCoordinateProcessAlive(Process process)
+        private bool IsDynamicCoordinateProcessAlive(ProcessSnapshot process)
         {
-            try
-            {
-                return !process.HasExited;
-            }
-            catch
-            {
-                return false;
-            }
+            return _processDiscoveryService.IsProcessAlive(process);
         }
 
-        private static (Process? TargetProcess, bool ClearTargetProcessId, string AmbiguousName)
+        private (ProcessSnapshot? TargetProcess, bool ClearTargetProcessId, string AmbiguousName)
             FindManualDynamicCoordinateProcess(int targetProcessId, string targetProcessName)
         {
             bool clearTargetProcessId = false;
             if (targetProcessId > 0)
             {
-                try
+                if (_processDiscoveryService.TryGetProcessById(targetProcessId, out ProcessSnapshot? process) &&
+                    process != null &&
+                    process.ProcessName.Equals(targetProcessName, StringComparison.OrdinalIgnoreCase))
                 {
-                    Process process = Process.GetProcessById(targetProcessId);
-                    if (process.ProcessName.Equals(targetProcessName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return (process, false, string.Empty);
-                    }
-                }
-                catch
-                {
-                    // 进程已退出或 PID 已不可用，继续按名称查找。
+                    return (process, false, string.Empty);
                 }
 
+                // 进程已退出、PID 已不可用或名称不匹配，继续按名称查找。
                 clearTargetProcessId = true;
             }
 
@@ -2403,18 +2399,18 @@ namespace JinChanChanTool
                 return (null, clearTargetProcessId, string.Empty);
             }
 
-            Process[] processesByName = Process.GetProcessesByName(targetProcessName);
-            if (processesByName.Length == 1)
+            List<ProcessSnapshot> processesByName = _processDiscoveryService.GetProcessesByName(targetProcessName);
+            if (processesByName.Count == 1)
             {
                 return (processesByName[0], clearTargetProcessId, string.Empty);
             }
 
-            return processesByName.Length > 1
+            return processesByName.Count > 1
                 ? (null, clearTargetProcessId, targetProcessName)
                 : (null, clearTargetProcessId, string.Empty);
         }
 
-        private bool IsTrackedProcessConfigurationMatch(Process process)
+        private bool IsTrackedProcessConfigurationMatch(ProcessSnapshot process)
         {
             if (_iManualSettingsService.CurrentConfig.IsAutoDetectTargetProcess)
             {

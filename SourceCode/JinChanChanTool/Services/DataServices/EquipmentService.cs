@@ -132,6 +132,7 @@ namespace JinChanChanTool.Services.DataServices
         /// </summary>
         public void ReLoad()
         {
+            ReleaseImages();
             Equipments.Clear();
             nameToEquipmentMap.Clear();
             Load();
@@ -263,6 +264,8 @@ namespace JinChanChanTool.Services.DataServices
                 {
                     return true;
                 }
+                DisposeImage(equipment.Image);
+                equipment.Image = null;
                 Equipments.RemoveAt(index);
                 return true;
             }
@@ -285,6 +288,7 @@ namespace JinChanChanTool.Services.DataServices
         /// </summary>
         private void LoadFromJson()
         {           
+            ReleaseImages();
             Equipments.Clear();
             if (paths.Length > 0 && pathIndex < paths.Length)
             {
@@ -372,8 +376,7 @@ namespace JinChanChanTool.Services.DataServices
                 {
 
                     string imagePath = Path.Combine(paths[pathIndex], "EquipmentImages", $"{Equipments[i].Name}.png");
-                    Image image = Image.FromFile(imagePath);                    
-                    Equipments[i].Image = new Bitmap(image);                    
+                    Equipments[i].Image = LoadImageCopy(imagePath);
                 }
                 catch
                 {
@@ -382,8 +385,7 @@ namespace JinChanChanTool.Services.DataServices
                     errors.AppendLine($"图片缺失：{Equipments[i].Name}.png");
                     try
                     {
-                        Image image = new Bitmap(64, 64);                        
-                        Equipments[i].Image = new Bitmap(image);
+                        Equipments[i].Image = new Bitmap(64, 64);
                     }
                     catch
                     {
@@ -419,6 +421,32 @@ namespace JinChanChanTool.Services.DataServices
             {
                 nameToEquipmentMap[equipment.Name] = equipment;
             }
+        }
+
+        /// <summary>
+        /// 从文件加载图片副本，避免 Image.FromFile 持续锁定源文件。
+        /// </summary>
+        private static Bitmap LoadImageCopy(string filePath)
+        {
+            using Image source = Image.FromFile(filePath);
+            return new Bitmap(source);
+        }
+
+        /// <summary>
+        /// 释放当前服务持有的装备图片。
+        /// </summary>
+        private void ReleaseImages()
+        {
+            foreach (Equipment equipment in Equipments)
+            {
+                DisposeImage(equipment.Image);
+                equipment.Image = null;
+            }
+        }
+
+        private static void DisposeImage(Image? image)
+        {
+            image?.Dispose();
         }
               
         #endregion

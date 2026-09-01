@@ -1,5 +1,4 @@
 ﻿using System.Text;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace JinChanChanTool.Services.AutoSetCoordinates
@@ -134,7 +133,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// </summary>
         /// <param name="targetProcess">用户选择的目标进程。</param>
         /// <returns>如果成功获取窗口信息，则返回true。</returns>
-        public bool SetTargetWindow(Process? targetProcess)
+        public bool SetTargetWindow(ProcessSnapshot? targetProcess)
         {
             ClearTargetWindow();
             if (targetProcess == null || targetProcess.MainWindowHandle == nint.Zero)
@@ -182,7 +181,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// </summary>
         /// <param name="parentProcess"></param>
         /// <returns></returns>
-        public bool SetTargetToLdPlayerGameWindow(Process? parentProcess)
+        public bool SetTargetToLdPlayerGameWindow(ProcessSnapshot? parentProcess)
         {
             ClearTargetWindow();
             if (parentProcess == null)
@@ -234,7 +233,7 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// </summary>
         /// <param name="parentProcess"></param>
         /// <returns></returns>
-        public bool SetTargetToBestChildWindow(Process? parentProcess)
+        public bool SetTargetToBestChildWindow(ProcessSnapshot? parentProcess)
         {
             ClearTargetWindow();
             if (parentProcess == null || parentProcess.MainWindowHandle == nint.Zero)
