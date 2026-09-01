@@ -171,6 +171,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
         public void ReLoad()
         {
             OutputForm.Instance.WriteLineOutputMessage("HeroEquipmentDataService: 正在执行 ReLoad...");
+            ReleaseEquipmentImages();
             HeroEquipments.Clear();
             EquipmentImageMap.Clear();
             Load();
@@ -303,6 +304,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
 
         private void LoadEquipmentImages()
         {
+            ReleaseEquipmentImages();
             EquipmentImageMap.Clear();
             string currentSeasonPath = GetCurrentSeasonPath();
             if (string.IsNullOrEmpty(currentSeasonPath))
@@ -326,8 +328,7 @@ namespace JinChanChanTool.Services.RecommendedEquipment
                     try
                     {
                         string imagePath = Path.Combine(imagesFolderPath, $"{equipmentName}.png");
-                        Image image = Image.FromFile(imagePath);
-                        imageListForHero.Add(image);
+                        imageListForHero.Add(LoadImageCopy(imagePath));
                     }
                     catch
                     {
@@ -345,6 +346,31 @@ namespace JinChanChanTool.Services.RecommendedEquipment
             }
 
             OutputForm.Instance.WriteLineOutputMessage($"成功为 {EquipmentImageMap.Count} 位英雄构建了装备图片映射。");
+        }
+
+        /// <summary>
+        /// 从文件加载图片副本，避免 Image.FromFile 持续锁定源文件。
+        /// </summary>
+        private static Bitmap LoadImageCopy(string filePath)
+        {
+            using Image source = Image.FromFile(filePath);
+            return new Bitmap(source);
+        }
+
+        /// <summary>
+        /// 释放装备推荐映射中的所有图片。
+        /// </summary>
+        private void ReleaseEquipmentImages()
+        {
+            foreach (List<Image> images in EquipmentImageMap.Values)
+            {
+                foreach (Image image in images)
+                {
+                    image.Dispose();
+                }
+
+                images.Clear();
+            }
         }
     }
 }

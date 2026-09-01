@@ -1,5 +1,4 @@
 ﻿using JinChanChanTool.DataClass.StaticData;
-using System.Diagnostics;
 using static JinChanChanTool.Services.AutoSetCoordinates.CoordinateCalculationService;
 
 namespace JinChanChanTool.Services.AutoSetCoordinates
@@ -82,8 +81,8 @@ namespace JinChanChanTool.Services.AutoSetCoordinates
         /// 设置用户选择的进程为自动化目标。
         /// 此方法会智能判断进程类型，并采用相应的窗口查找策略。
         /// </summary>
-        /// <param name="process">用户选择的进程。</param>
-        public void SetTargetProcess(Process? process)
+        /// <param name="process">用户选择的进程快照。</param>
+        public void SetTargetProcess(ProcessSnapshot? process)
         {
             _useLegacyTftTemplate = false;
 

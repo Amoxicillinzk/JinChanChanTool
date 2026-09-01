@@ -1,7 +1,6 @@
 ﻿using JinChanChanTool.Services.AutoSetCoordinates;
 using JinChanChanTool.Services.Localization;
 using JinChanChanTool.Tools;
-using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 
@@ -15,13 +14,13 @@ namespace JinChanChanTool.Forms
         private readonly ProcessDiscoveryService _processDiscoveryService;//进程发现服务
         private readonly ILocalizationService _iLocalizationService;
 
-        public Process SelectedProcess { get; private set; }//选中的进程
+        public ProcessSnapshot? SelectedProcess { get; private set; }//选中的进程快照
 
         private class ProcessDisplayItem
         {
-            public Process Process { get; }
+            public ProcessSnapshot Process { get; }
             public string DisplayName => $"{Process.ProcessName} (ID: {Process.Id}) - {Process.MainWindowTitle}";
-            public ProcessDisplayItem(Process process) { Process = process; }
+            public ProcessDisplayItem(ProcessSnapshot process) { Process = process; }
             public override string ToString() => DisplayName;
         }
 
@@ -67,10 +66,10 @@ namespace JinChanChanTool.Forms
             listView_Processes.Items.Clear();
             imageList_ProcessIcons.Images.Clear();
 
-            List<Process> processes = _processDiscoveryService.GetPotentiallyVisibleProcesses();
+            List<ProcessSnapshot> processes = _processDiscoveryService.GetPotentiallyVisibleProcesses();
             int imageIndex = 0;
 
-            foreach (Process process in processes)
+            foreach (ProcessSnapshot process in processes)
             {
                 // 尝试获取进程图标
                 Icon? processIcon = GetProcessIcon(process);
@@ -102,12 +101,11 @@ namespace JinChanChanTool.Forms
         /// </summary>
         /// <param name="process">目标进程</param>
         /// <returns>进程图标，获取失败返回 null</returns>
-        private Icon? GetProcessIcon(Process process)
+        private Icon? GetProcessIcon(ProcessSnapshot process)
         {
             try
             {
-                // 尝试获取进程的主模块文件路径
-                string? filePath = process.MainModule?.FileName;
+                string? filePath = process.ExecutablePath;
                 if (!string.IsNullOrEmpty(filePath))
                 {
                     // 从可执行文件提取关联图标
@@ -129,7 +127,7 @@ namespace JinChanChanTool.Forms
         private void Button_Select_Click(object? sender, EventArgs e)
         {
             if (listView_Processes.SelectedItems.Count > 0 &&
-                listView_Processes.SelectedItems[0].Tag is Process selectedProcess)
+                listView_Processes.SelectedItems[0].Tag is ProcessSnapshot selectedProcess)
             {
                 SelectedProcess = selectedProcess;
                 this.DialogResult = DialogResult.OK;
