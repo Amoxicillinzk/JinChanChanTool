@@ -123,7 +123,7 @@ public static class WinRateDecisionEngine
         if (augments.Count == 0)
         {
             if (LooksLikeUnrivaledComp(comp.Name))
-                return new AugmentFit(-18, [], "该阵容疑似依赖“Unrivaled/宿敌”专属强化；未录入强化符文时不要硬锁。");
+                return new AugmentFit(-18, [], "专属强化未确认：该阵容疑似依赖“Unrivaled/宿敌”；在确认拿到前不应锁定。 ");
             return new AugmentFit(0, [], "");
         }
 
