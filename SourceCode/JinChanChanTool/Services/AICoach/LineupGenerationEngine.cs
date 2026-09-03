@@ -279,7 +279,6 @@ public sealed class LineupGenerationEngine
                 if (!validHeroes.Contains(hero) || !seenHeroes.Add(hero)) continue;
                 if (!heroByName.TryGetValue(hero, out HeroCatalogRow? heroData)) continue;
 
-                // 标准阶段模板不能依赖正常时点几乎拿不到的高费牌。
                 if (stage == 0 && heroData.Cost >= 4) return null;
                 if (stage == 1 && heroData.Cost >= 5) return null;
 
@@ -320,7 +319,6 @@ public sealed class LineupGenerationEngine
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(10)
             .ToList();
-        List<HeroCatalogRow> catalogList = heroByName.Values.ToList();
         normalized.SubLineUps[2].LineUpUnits = BuildUnits(
             finalNames, source, heroByName, validEquipment, preferMetaPositions: true);
 
@@ -350,6 +348,7 @@ public sealed class LineupGenerationEngine
 
         List<string> extraEarly = heroes
             .Where(h => h.Cost <= 2 && !finalNames.Contains(h.HeroName))
+            .Where(h => TraitOverlap(h) > 0)
             .OrderByDescending(TraitOverlap)
             .ThenBy(h => h.Cost)
             .ThenBy(h => h.HeroName, StringComparer.OrdinalIgnoreCase)
@@ -359,6 +358,7 @@ public sealed class LineupGenerationEngine
 
         List<string> extraMid = heroes
             .Where(h => h.Cost <= 3 && !finalNames.Contains(h.HeroName))
+            .Where(h => TraitOverlap(h) > 0)
             .OrderByDescending(TraitOverlap)
             .ThenBy(h => h.Cost)
             .ThenBy(h => h.HeroName, StringComparer.OrdinalIgnoreCase)
@@ -385,8 +385,17 @@ public sealed class LineupGenerationEngine
             .OrderBy(n => catalog.TryGetValue(n, out HeroCatalogRow? h) ? h.Cost : 9)
             .ToList();
 
-        List<string> early = extraEarly
-            .Concat(cheapFinal.Where(n => catalog.TryGetValue(n, out HeroCatalogRow? h) && h.Cost <= 3))
+        List<string> lowCostFinalCores = comp.Units
+            .Where(u => catalog.TryGetValue(u.HeroName, out HeroCatalogRow? h) && h.Cost <= 2)
+            .OrderByDescending(u => u.EquipmentNames.Count(x => !string.IsNullOrWhiteSpace(x)))
+            .ThenBy(u => catalog.TryGetValue(u.HeroName, out HeroCatalogRow? h) ? h.Cost : 9)
+            .Select(u => u.HeroName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        List<string> early = lowCostFinalCores
+            .Concat(extraEarly)
+            .Concat(cheapFinal.Where(n => catalog.TryGetValue(n, out HeroCatalogRow? h) && h.Cost == 3))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(5)
             .ToList();
