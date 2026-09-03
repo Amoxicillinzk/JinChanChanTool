@@ -29,14 +29,20 @@ public static class AiCoachBootstrap
             if (cardField?.GetValue(main) is not CardService cardService) return;
             if (lineupField?.GetValue(main) is not ILineUpService lineUpService) return;
 
-            _coachForm = new AiCoachForm(cardService, lineUpService)
+            _coachForm = new AiCoachForm(cardService, lineUpService, main)
             {
                 TopMost = main.TopMost
             };
 
-            Rectangle working = Screen.FromControl(main).WorkingArea;
-            int x = Math.Min(working.Right - _coachForm.Width, main.Right + 8);
-            int y = Math.Max(working.Top, Math.Min(main.Top, working.Bottom - _coachForm.Height));
+            Screen gameScreen = Screen.FromControl(main);
+            Screen targetScreen = Screen.AllScreens.FirstOrDefault(s =>
+                !string.Equals(s.DeviceName, gameScreen.DeviceName, StringComparison.OrdinalIgnoreCase)) ?? gameScreen;
+            Rectangle working = targetScreen.WorkingArea;
+
+            int x = targetScreen == gameScreen
+                ? Math.Min(working.Right - _coachForm.Width, main.Right + 8)
+                : working.Left + 16;
+            int y = Math.Max(working.Top + 8, Math.Min(main.Top, working.Bottom - _coachForm.Height));
             _coachForm.Location = new Point(Math.Max(working.Left, x), y);
             _coachForm.Show(main);
         }
