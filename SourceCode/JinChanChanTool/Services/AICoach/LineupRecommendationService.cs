@@ -126,6 +126,9 @@ public sealed class LineupRecommendationService
                 comp, state.Augments, targetTraits, desiredEquipments);
 
             bool reroll = IsRerollComp(comp);
+            HeroCopyRaceEvaluator.Result copyRace = HeroCopyRaceEvaluator.Evaluate(
+                stageCore.Union(finalCore, StringComparer.OrdinalIgnoreCase), state, reroll);
+
             double urgency = state.Hp switch
             {
                 <= 0 => 1.0,
@@ -142,7 +145,7 @@ public sealed class LineupRecommendationService
             double traitScore = Math.Min(18, traitCoverage * 18.0);
             double shopScore = Math.Min(10, shopCore.Count * 3.5 + shopFlex.Count * 1.3);
 
-            // 对D牌阵，实际持有张数比“是否有这张牌”重要得多；普通运营阵保持温和权重。
+            // 总持有张数用于衡量对整条路线的投入；“接近三星/竞争优势”由 HeroCopyRaceEvaluator 逐英雄判断。
             double heldScore = reroll
                 ? Math.Min(20, heldCore.Count * 1.5 + heldCoreCopies * 1.8 + heldFlexCopies * 0.35)
                 : Math.Min(12, heldCore.Count * 3.0 + heldCoreCopies * 0.8 + heldFlexCopies * 0.25);
@@ -152,22 +155,8 @@ public sealed class LineupRecommendationService
             double strategyScore = WinRateDecisionEngine.CalculateStrategicFit(comp, state);
             double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, stageHeroes, state);
 
-            double contestPenalty = contestedCore.Count == 0
-                ? 0
-                : reroll
-                    ? Math.Min(32, contestedCore.Count * 3.0 + contestedCoreCopies * 2.2)
-                    : Math.Min(14, contestedCore.Count * 2.5 + contestedCoreCopies * 0.9);
-
-            // 核心张数明显领先时允许继续追；同行库存明显领先时再额外惩罚。
-            double copyRaceAdjustment = 0;
-            if (reroll)
-            {
-                if (heldCoreCopies >= 7 && contestedCoreCopies <= 3) copyRaceAdjustment += 7;
-                else if (heldCoreCopies >= 5 && contestedCoreCopies <= heldCoreCopies) copyRaceAdjustment += 4;
-
-                if (contestedCoreCopies >= heldCoreCopies + 5 && heldCoreCopies <= 4) copyRaceAdjustment -= 9;
-                else if (contestedCoreCopies >= heldCoreCopies + 3 && heldCoreCopies <= 3) copyRaceAdjustment -= 5;
-            }
+            double contestPenalty = copyRace.ContestPenalty;
+            double copyRaceAdjustment = copyRace.ScoreAdjustment;
 
             bool sameAsCurrent = !string.IsNullOrWhiteSpace(currentSelectedName) &&
                 NormalizeName(currentSelectedName) == NormalizeName(comp.Name);
@@ -179,8 +168,7 @@ public sealed class LineupRecommendationService
                 ? stageIndex == 1 ? 4.0 : 6.0
                 : 0;
 
-            string contestWarning = BuildContestWarning(
-                reroll, heldCore, contestedCore, heldCoreCopies, contestedCoreCopies, state);
+            string contestWarning = HeroCopyRaceEvaluator.BuildWarning(copyRace, reroll);
             string templateWarning = stageTemplateFallback
                 ? "当前阵容缺少对应阶段模板，暂用Meta终局单位估算；不要仅凭该结果锁阵。"
                 : "";
@@ -203,13 +191,15 @@ public sealed class LineupRecommendationService
                 state, board, meta, matchedHeroes.Count + matchedHeld.Count, matchedEquipments.Count);
             confidence += V41ScoreCalibration.MetaConfidenceAdjustment(comp);
             if (stageTemplateFallback) confidence -= 10;
-            if (state.HeldHeroes.Count > 0) confidence += heldCoreCopies >= 5 ? 7 : 4;
-            if (state.ContestedHeroes.Count > 0) confidence += contestedCoreCopies >= 4 ? 6 : 4;
+            if (copyRace.BestProgress is { Held: >= 5 }) confidence += 7;
+            else if (state.HeldHeroes.Count > 0) confidence += 4;
+            if (copyRace.WorstPressure is { Contested: >= 4 }) confidence += 6;
+            else if (state.ContestedHeroes.Count > 0) confidence += 4;
             confidence = Math.Clamp(confidence, 15, 100);
 
             string risk = WinRateDecisionEngine.ClassifyRisk(score, confidence, strategyScore, warning);
             string action = WinRateDecisionEngine.BuildNextAction(comp, state, stageIndex);
-            action = ApplyCopyRaceAction(action, reroll, heldCoreCopies, contestedCoreCopies, state);
+            action = HeroCopyRaceEvaluator.ApplyAction(action, copyRace, reroll);
 
             result.Add(new LineupRecommendation
             {
@@ -240,7 +230,7 @@ public sealed class LineupRecommendationService
                     heldCore, heldFlex, contestedCore, heldCoreCopies, contestedCoreCopies,
                     directMatches, componentMatches, augmentFit.Matches, emblemFit.Matches,
                     traitCoverage, strategyScore, transitionPenalty, contestPenalty,
-                    copyRaceAdjustment, continuityBonus, warning, action, state)
+                    copyRaceAdjustment, continuityBonus, warning, action, state, copyRace)
             });
         }
 
@@ -387,48 +377,6 @@ public sealed class LineupRecommendationService
             ordered[i].Reason += $"；V4.1决策：{ordered[i].Decision}，置信度{ordered[i].Confidence:0}%";
         }
         return ordered;
-    }
-
-    private static string BuildContestWarning(
-        bool reroll,
-        List<string> heldCore,
-        List<string> contestedCore,
-        int heldCoreCopies,
-        int contestedCoreCopies,
-        GameStateSnapshot state)
-    {
-        if (contestedCore.Count == 0) return "";
-        string contestedText = FormatCountedHeroes(state.ContestedHeroCounts, contestedCore);
-        if (!reroll)
-            return $"核心牌被同行争抢：{contestedText}；预计搜牌成本上升。";
-
-        string heldText = heldCore.Count == 0 ? "0张" : FormatCountedHeroes(state.HeldHeroCounts, heldCore);
-        if (contestedCoreCopies >= heldCoreCopies + 5 && heldCoreCopies <= 4)
-            return $"追三竞争明显不利：你持有{heldText}，同行可见约{contestedText}；除非装备/强化极度绑定，否则应准备转阵。";
-        if (heldCoreCopies >= 6 && heldCoreCopies >= contestedCoreCopies + 2)
-            return $"存在同行但你数量领先：你持有{heldText}，同行约{contestedText}；可继续追，但不要无底线D空。";
-        return $"追三核心被同行争抢：你持有{heldText}，同行约{contestedText}；下一轮继续比较数量优势。";
-    }
-
-    private static string ApplyCopyRaceAction(
-        string action,
-        bool reroll,
-        int heldCoreCopies,
-        int contestedCoreCopies,
-        GameStateSnapshot state)
-    {
-        if (!reroll) return action;
-
-        if (heldCoreCopies >= 7 && contestedCoreCopies <= 3)
-            return action + " 核心已接近三星，优先完成该核心后再转经济。";
-
-        if (contestedCoreCopies >= heldCoreCopies + 5 && heldCoreCopies <= 4)
-            return action + " 同行核心库存明显领先：本轮不要继续无上限追三，优先评估转阵。";
-
-        if (heldCoreCopies >= 5)
-            return action + $" 当前已持有核心约{heldCoreCopies}张，转阵前必须计算放弃这些牌的真实成本。";
-
-        return action;
     }
 
     private Dictionary<string, LineUp> BuildLocalLineupMap()
@@ -617,7 +565,8 @@ public sealed class LineupRecommendationService
         double continuityBonus,
         string warning,
         string action,
-        GameStateSnapshot state)
+        GameStateSnapshot state,
+        HeroCopyRaceEvaluator.Result copyRace)
     {
         string stage = stageIndex switch { 0 => "前期", 1 => "中期", _ => "后期" };
         var parts = new List<string>
@@ -629,16 +578,20 @@ public sealed class LineupRecommendationService
         if (boardCore.Count > 0) parts.Add($"上场核心：{string.Join("、", boardCore)}");
         if (boardFlex.Count > 0) parts.Add($"上场过渡：{string.Join("、", boardFlex)}");
         if (matchedTraits.Count > 0) parts.Add($"羁绊覆盖{traitCoverage:P0}：{string.Join("、", matchedTraits)}");
-        if (heldCore.Count > 0) parts.Add($"持有核心：{FormatCountedHeroes(state.HeldHeroCounts, heldCore)}（合计{heldCoreCopies}张）");
+        if (heldCore.Count > 0) parts.Add($"持有核心：{FormatCountedHeroes(state.HeldHeroCounts, heldCore)}（路线合计{heldCoreCopies}张）");
         if (heldFlex.Count > 0) parts.Add($"持有过渡：{FormatCountedHeroes(state.HeldHeroCounts, heldFlex)}");
+        if (copyRace.BestProgress is { } best)
+            parts.Add($"单卡追三进度：{best.Hero}你约{best.Held}张/同行约{best.Contested}张");
         if (shopCore.Count > 0) parts.Add($"商店核心：{string.Join("、", shopCore)}");
         if (shopFlex.Count > 0) parts.Add($"商店可留：{string.Join("、", shopFlex)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
         if (augmentMatches.Count > 0) parts.Add($"强化适配：{string.Join("、", augmentMatches)}");
         if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
-        if (contestedCore.Count > 0) parts.Add($"同行争抢：{FormatCountedHeroes(state.ContestedHeroCounts, contestedCore)}（约{contestedCoreCopies}张，-{contestPenalty:0.0}）");
-        if (copyRaceAdjustment != 0) parts.Add($"追三星数量竞争调整{copyRaceAdjustment:+0.0;-0.0}");
+        if (contestedCore.Count > 0) parts.Add($"同行争抢：{FormatCountedHeroes(state.ContestedHeroCounts, contestedCore)}（路线合计约{contestedCoreCopies}张，-{contestPenalty:0.0}）");
+        if (copyRace.WorstPressure is { } worst && worst.Contested > 0)
+            parts.Add($"单卡竞争压力：{worst.Hero}你约{worst.Held}张/同行约{worst.Contested}张");
+        if (copyRaceAdjustment != 0) parts.Add($"逐英雄追三竞争调整{copyRaceAdjustment:+0.0;-0.0}");
         if (continuityBonus > 0) parts.Add($"当前已走该路线，减少无意义转阵(+{continuityBonus:0})");
         if (comp.Tags.Count > 0) parts.Add($"运营标签：{string.Join("/", comp.Tags.Take(4))}");
         if (strategyScore >= 5) parts.Add("当前等级/经济/血量契合该运营节奏");
@@ -669,12 +622,12 @@ public sealed class LineupRecommendationService
         var parts = new List<string> { $"在线Meta不可用，按本地{stage}阵容兜底" };
         if (boardHeroes.Count > 0) parts.Add($"上场命中：{string.Join("、", boardHeroes)}");
         if (matchedTraits.Count > 0) parts.Add($"羁绊覆盖{traitCoverage:P0}：{string.Join("、", matchedTraits)}");
-        if (heldHeroes.Count > 0) parts.Add($"持有：{FormatCountedHeroes(state.HeldHeroCounts, heldHeroes)}（{heldCopies}张）");
+        if (heldHeroes.Count > 0) parts.Add($"持有：{FormatCountedHeroes(state.HeldHeroCounts, heldHeroes)}（路线合计{heldCopies}张）");
         if (shopHeroes.Count > 0) parts.Add($"商店命中：{string.Join("、", shopHeroes)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
         if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
-        if (contestedHeroes.Count > 0) parts.Add($"同行争抢：{FormatCountedHeroes(state.ContestedHeroCounts, contestedHeroes)}（约{contestedCopies}张）");
+        if (contestedHeroes.Count > 0) parts.Add($"同行争抢：{FormatCountedHeroes(state.ContestedHeroCounts, contestedHeroes)}（路线合计约{contestedCopies}张）");
         parts.Add($"下一步：{action}");
         return string.Join("；", parts);
     }
