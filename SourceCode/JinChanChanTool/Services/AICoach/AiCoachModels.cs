@@ -15,12 +15,12 @@ public sealed class AiCoachSettings
     public int InventoryReferenceWidth { get; set; } = 2048;
     public int InventoryReferenceHeight { get; set; } = 1152;
     public int InventorySlotX { get; set; } = 8;
-    public int InventorySlotY { get; set; } = 231;
+    public int InventorySlotY { get; set; } = 279;
     public int InventorySlotWidth { get; set; } = 50;
     public int InventorySlotHeight { get; set; } = 50;
     public int InventorySlotStepY { get; set; } = 58;
-    public int InventorySlotCount { get; set; } = 9;
-    public double InventoryMatchThreshold { get; set; } = 0.70;
+    public int InventorySlotCount { get; set; } = 10;
+    public double InventoryMatchThreshold { get; set; } = 0.78;
     public double InventoryEmptyMeanThreshold { get; set; } = 24.0;
     public double InventoryEmptyStdThreshold { get; set; } = 26.0;
 }
