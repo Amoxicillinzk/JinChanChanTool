@@ -27,31 +27,41 @@ public sealed class OpenAiCompatibleClient
         string metaJson = JsonSerializer.Serialize(OnlineMetaState.GetSnapshot());
         string recJson = JsonSerializer.Serialize(recommendations);
         string prompt = $"""
-你是严谨的云顶之弈复盘与训练教练。请严格基于给出的结构化局面、实时上场棋盘信号、当前版本在线Meta统计和候选阵容，不要虚构未提供的棋子、装备、海克斯或纹章。
+你是 JinChanChanTool V4.1 的云顶之弈实时决策教练。用户会直接照你的操作执行，因此你的目标是减少掉分决策，而不是写攻略文章。
+
+必须遵守：
+1. 只能基于提供的数据，不得虚构没有提供的棋子、装备、纹章、强化符文、对手阵容或胜率。
+2. `Score` 是本地决策引擎的“当前局面适配分”，不是实际胜率；不要把它说成胜率。
+3. `Confidence` 表示当前输入信息完整度；低置信度时必须保留转阵空间。
+4. `Decision` 已综合当前阶段模板、棋盘、装备、纹章、强化、经济、血量、Meta强度和转阵成本。除非你能指出结构化数据里的明确矛盾，否则不要随意推翻第一候选。
+5. `Warning` 非空时必须优先处理；尤其是“缺少专属强化”“Meta过旧”“血量危险”。
+6. 低血量优先即时战力和存活，不允许为了速8/速9连续空过；高血高经济才追求上限。
+7. D牌阵必须尊重等级窗口。错过窗口、核心数量不足时，要明确建议停止追三星或转阵。
+8. 纹章和强化符文是方向性强信号；如果它们与第一候选冲突，要说明是否转到第二候选。
+9. 商店五张牌只是瞬时弱信号，不能因为单轮商店出现一张高费卡就强行转阵。
+10. 如果数据不足，明确说“继续观察”，不要假装确定。
 
 数据可信度顺序：
-1. 当前已上场棋子/羁绊；
-2. 当前阶段、等级、金币、血量；
-3. 在线Meta的当前版本统计（Tier、平均名次、前四率、登顶率、登场率、运营标签）；
-4. 当前商店瞬时结果；
-5. 已经确认的装备/纹章。
+- 已确认的当前棋盘/羁绊；
+- 阶段、等级、金币、血量；
+- 已确认装备、纹章、强化符文；
+- 当前手动刷新得到的 MetaTFT 快照及其统计；
+- 当前商店瞬时结果。
 
-候选阵容的 Source/MetaTier/MetaWinRate/MetaTopFourRate/MetaPickRate/MetaAverageRank/MetaTags 来自实时在线阵容数据库。不要把高登顶率但与当前棋盘完全不相关的阵容强行列为第一选择；同时不要因为登场率低就否定数据优秀的冷门强阵。
-
-实时上场棋盘信号来自左侧羁绊面板 OCR：Traits 是当前上场棋子产生的羁绊计数；InferredHeroes 仅在低等级羁绊组合唯一时填写，为空时不要自行猜具体英雄。
-装备自动识别目前暂停，Equipments 中只使用已确认数据。
-
-输出中文，简洁、可执行，包含：
-1. 当前最推荐的阵容和为什么；
-2. 第二候选以及什么条件下转过去；
-3. 当前棋盘属于哪种过渡路线；
-4. 结合等级/金币/血量说明运营节奏；
-5. 如果在线Meta数据支持，给出该阵容的Tier、前四率和登顶率作为参考。
+请用中文输出，严格控制在 8 行以内，按下面格式：
+【主推】阵容名｜锁定/主推/观察｜风险低/中/高
+【现在】这一轮立刻做什么：升人口 / D多少 / 停D / 存钱 / 合装备 / 上哪类棋子
+【装备】当前已确认装备优先服务谁；没有可靠装备数据就写“继续保留通用散件”
+【强化/纹章】当前强化与纹章是否支持主推阵容；不支持时给出第二候选
+【转阵条件】只写1~2个明确触发条件，例如“7级D两轮仍无核心两星”
+【经济血量】解释为什么现在该贪或该止损
+【第二候选】阵容名｜什么条件下切过去
+【禁止】当前最容易犯的一个错误
 
 局面：{stateJson}
 实时上场棋盘：{boardJson}
-在线Meta状态：{metaJson}
-候选阵容：{recJson}
+Meta快照：{metaJson}
+V4.1候选：{recJson}
 """;
 
         var body = new
@@ -59,10 +69,14 @@ public sealed class OpenAiCompatibleClient
             model = settings.Model.Trim(),
             messages = new object[]
             {
-                new { role = "system", content = "你是严谨的云顶之弈策略分析助手。优先使用当前棋盘和局面，再结合实时版本Meta统计；商店只是瞬时弱信号。只基于提供的数据分析。" },
+                new
+                {
+                    role = "system",
+                    content = "你是实时云顶决策助手。回答必须短、可执行、保守处理不确定信息。优先避免低血贪经济、错过D牌窗口、缺专属强化硬玩和高成本无依据转阵。"
+                },
                 new { role = "user", content = prompt }
             },
-            temperature = 0.2
+            temperature = 0.1
         };
 
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
@@ -72,10 +86,11 @@ public sealed class OpenAiCompatibleClient
             throw new InvalidOperationException($"AI 接口返回 {(int)response.StatusCode}: {Trim(json, 500)}");
 
         using JsonDocument doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+        if (doc.RootElement.TryGetProperty("choices", out JsonElement choices) && choices.GetArrayLength() > 0)
         {
-            var first = choices[0];
-            if (first.TryGetProperty("message", out var message) && message.TryGetProperty("content", out var content))
+            JsonElement first = choices[0];
+            if (first.TryGetProperty("message", out JsonElement message) &&
+                message.TryGetProperty("content", out JsonElement content))
                 return content.GetString() ?? "AI 未返回文本内容。";
         }
         throw new InvalidOperationException("AI 返回格式不兼容，未找到 choices[0].message.content。");
