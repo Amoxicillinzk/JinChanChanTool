@@ -50,52 +50,56 @@ public static class LiveHudState
             int previousMajor = ParseStageMajor(_current.Stage);
             int incomingMajor = ParseStageMajor(partial.Stage);
             bool suspiciousRollback = previousMajor >= 3 && incomingMajor == 2;
+            bool holdPreviousFrame = false;
 
             if (suspiciousRollback)
             {
                 _newGameStage2Streak++;
                 if (_newGameStage2Streak < 2)
                 {
+                    // 第一帧只记诊断，不接受这一帧的阶段/等级/金币/血量。
                     _current.Error = "检测到疑似新对局阶段回跳，等待下一帧确认。";
                     _current.CapturedAt = now;
-                    copy = Clone(_current);
-                    Monitor.Exit(Sync);
-                    try { Changed?.Invoke(copy); }
-                    finally { Monitor.Enter(Sync); }
-                    return;
+                    holdPreviousFrame = true;
                 }
-
-                _current = new LiveHudSnapshot();
-                _newGameStage2Streak = 0;
+                else
+                {
+                    _current = new LiveHudSnapshot();
+                    _newGameStage2Streak = 0;
+                }
             }
             else if (incomingMajor > 0)
             {
                 _newGameStage2Streak = 0;
             }
 
-            if (!string.IsNullOrWhiteSpace(partial.Stage))
+            if (!holdPreviousFrame)
             {
-                _current.Stage = partial.Stage;
-                _current.StageAt = now;
-            }
-            if (partial.Level.HasValue)
-            {
-                _current.Level = partial.Level;
-                _current.LevelAt = now;
-            }
-            if (partial.Gold.HasValue)
-            {
-                _current.Gold = partial.Gold;
-                _current.GoldAt = now;
-            }
-            if (partial.Hp.HasValue)
-            {
-                _current.Hp = partial.Hp;
-                _current.HpAt = now;
+                if (!string.IsNullOrWhiteSpace(partial.Stage))
+                {
+                    _current.Stage = partial.Stage;
+                    _current.StageAt = now;
+                }
+                if (partial.Level.HasValue)
+                {
+                    _current.Level = partial.Level;
+                    _current.LevelAt = now;
+                }
+                if (partial.Gold.HasValue)
+                {
+                    _current.Gold = partial.Gold;
+                    _current.GoldAt = now;
+                }
+                if (partial.Hp.HasValue)
+                {
+                    _current.Hp = partial.Hp;
+                    _current.HpAt = now;
+                }
+
+                _current.Error = partial.Error;
+                _current.CapturedAt = now;
             }
 
-            _current.Error = partial.Error;
-            _current.CapturedAt = now;
             copy = Clone(_current);
         }
         Changed?.Invoke(copy);
