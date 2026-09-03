@@ -9,14 +9,18 @@ public sealed class AiCoachForm : Form
     private readonly LineupRecommendationService _recommendationService;
     private readonly AiCoachSettingsStore _settingsStore = new();
     private readonly OpenAiCompatibleClient _aiClient = new();
+    private readonly InventoryRecognitionService _inventoryRecognizer;
     private readonly System.Windows.Forms.Timer _timer = new();
 
     private AiCoachSettings _settings;
+    private InventoryRecognitionResult _inventoryResult = new();
     private readonly Label _shopLabel = new();
     private readonly TextBox _stageBox = new();
     private readonly NumericUpDown _levelBox = new();
     private readonly NumericUpDown _goldBox = new();
     private readonly NumericUpDown _hpBox = new();
+    private readonly CheckBox _autoEquipmentCheck = new();
+    private readonly Label _autoEquipmentLabel = new();
     private readonly TextBox _equipmentBox = new();
     private readonly TextBox _augmentBox = new();
     private readonly TextBox _emblemBox = new();
@@ -27,17 +31,20 @@ public sealed class AiCoachForm : Form
     private readonly TextBox _baseUrlBox = new();
     private readonly TextBox _apiKeyBox = new();
     private readonly TextBox _modelBox = new();
+    private readonly TextBox _inventoryRegionBox = new();
+    private readonly NumericUpDown _inventoryThresholdBox = new();
 
-    public AiCoachForm(CardService cardService, ILineUpService lineUpService)
+    public AiCoachForm(CardService cardService, ILineUpService lineUpService, Control gameAnchor)
     {
         _stateReader = new CardServiceStateReader(cardService);
         _recommendationService = new LineupRecommendationService(lineUpService);
+        _inventoryRecognizer = new InventoryRecognitionService(gameAnchor);
         _settings = _settingsStore.Load();
 
-        Text = "AI 云顶教练 V1";
+        Text = "AI 云顶教练 V2";
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(610, 760);
-        MinimumSize = new Size(560, 660);
+        Size = new Size(660, 820);
+        MinimumSize = new Size(600, 720);
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
         ShowInTaskbar = true;
 
@@ -56,7 +63,7 @@ public sealed class AiCoachForm : Form
                 Hide();
             }
         };
-
+        Disposed += (_, _) => _inventoryRecognizer.Dispose();
         Shown += (_, _) => RefreshRecommendations();
     }
 
@@ -74,10 +81,10 @@ public sealed class AiCoachForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 10,
+            RowCount = 11,
             AutoScroll = true
         };
-        coach.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
+        coach.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         coach.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         coachTab.Controls.Add(coach);
 
@@ -99,42 +106,57 @@ public sealed class AiCoachForm : Form
         ]);
         AddRow(coach, 1, "局面", statePanel);
 
-        ConfigureCsvBox(_equipmentBox, "例如：反曲之弓,暴风之剑,鬼索的狂暴之刃");
+        var autoEquipmentPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+        _autoEquipmentCheck.AutoSize = true;
+        _autoEquipmentCheck.Text = "自动识别";
+        _autoEquipmentLabel.AutoSize = true;
+        _autoEquipmentLabel.MaximumSize = new Size(390, 0);
+        _autoEquipmentLabel.Text = "等待装备栏截图...";
+        autoEquipmentPanel.Controls.Add(_autoEquipmentCheck);
+        autoEquipmentPanel.Controls.Add(_autoEquipmentLabel);
+        AddRow(coach, 2, "装备栏", autoEquipmentPanel, 62);
+
+        ConfigureCsvBox(_equipmentBox, "可手动补充/纠错，例如：反曲之弓,暴风之剑");
         ConfigureCsvBox(_augmentBox, "例如：DD街区,珠光莲花");
-        ConfigureCsvBox(_emblemBox, "例如：花仙子纹章,神谕者纹章");
-        AddRow(coach, 2, "装备", _equipmentBox);
-        AddRow(coach, 3, "强化符文", _augmentBox);
-        AddRow(coach, 4, "纹章", _emblemBox);
+        ConfigureCsvBox(_emblemBox, "可手动补充，例如：花仙子纹章,神谕者纹章");
+        AddRow(coach, 3, "手动补充装备", _equipmentBox);
+        AddRow(coach, 4, "强化符文", _augmentBox);
+        AddRow(coach, 5, "手动补充纹章", _emblemBox);
 
         _recommendationList.Dock = DockStyle.Fill;
         _recommendationList.View = View.Details;
         _recommendationList.FullRowSelect = true;
         _recommendationList.GridLines = true;
+        _recommendationList.ShowItemToolTips = true;
         _recommendationList.Height = 170;
-        _recommendationList.Columns.Add("阵容", 250);
+        _recommendationList.Columns.Add("阵容", 280);
         _recommendationList.Columns.Add("匹配度", 80);
         _recommendationList.Columns.Add("阶段", 70);
-        AddRow(coach, 5, "推荐Top5", _recommendationList, 180);
+        AddRow(coach, 6, "推荐Top5", _recommendationList, 180);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
         var refreshButton = new Button { Text = "刷新推荐", AutoSize = true };
         var analyzeButton = new Button { Text = "调用AI分析", AutoSize = true };
+        var captureButton = new Button { Text = "保存装备区截图", AutoSize = true };
         refreshButton.Click += (_, _) => RefreshRecommendations();
         analyzeButton.Click += async (_, _) => await AnalyzeWithAiAsync();
+        captureButton.Click += (_, _) => SaveInventoryDebugCapture();
         buttons.Controls.Add(refreshButton);
         buttons.Controls.Add(analyzeButton);
-        AddRow(coach, 6, "操作", buttons);
+        buttons.Controls.Add(captureButton);
+        AddRow(coach, 7, "操作", buttons);
 
         _statusLabel.AutoSize = true;
+        _statusLabel.MaximumSize = new Size(430, 0);
         _statusLabel.ForeColor = Color.DimGray;
-        _statusLabel.Text = "V1：商店英雄实时读取；装备/海克斯/纹章先结构化录入，后续接截图识别。";
-        AddRow(coach, 7, "状态", _statusLabel);
+        _statusLabel.Text = "V2：商店英雄 + 左侧装备/纹章实时识别；强化符文仍可手动录入。";
+        AddRow(coach, 8, "状态", _statusLabel, 54);
 
         _aiOutput.Dock = DockStyle.Fill;
         _aiOutput.ReadOnly = true;
         _aiOutput.BackColor = SystemColors.Window;
-        _aiOutput.Height = 230;
-        AddRow(coach, 8, "AI建议", _aiOutput, 240);
+        _aiOutput.Height = 210;
+        AddRow(coach, 9, "AI建议", _aiOutput, 220);
 
         var policy = new Label
         {
@@ -143,33 +165,40 @@ public sealed class AiCoachForm : Form
             Text = "提示：请将 AI 建议用于训练/复盘，并遵守游戏及第三方工具的相关规则。",
             ForeColor = Color.DimGray
         };
-        AddRow(coach, 9, "说明", policy);
+        AddRow(coach, 10, "说明", policy);
 
         var settings = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
-        settings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+        settings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         settingsTab.Controls.Add(settings);
         _baseUrlBox.Dock = DockStyle.Fill;
         _apiKeyBox.Dock = DockStyle.Fill;
         _apiKeyBox.UseSystemPasswordChar = true;
         _modelBox.Dock = DockStyle.Fill;
+        _inventoryRegionBox.Dock = DockStyle.Fill;
+        _inventoryRegionBox.PlaceholderText = "x,y,w,h,纵向步长,槽位数";
+        ConfigureNumber(_inventoryThresholdBox, 50, 95, 70, 70);
+        _inventoryThresholdBox.DecimalPlaces = 0;
+        _inventoryThresholdBox.Increment = 1;
+
         AddSettingRow(settings, 0, "API地址", _baseUrlBox);
         AddSettingRow(settings, 1, "API Key", _apiKeyBox);
         AddSettingRow(settings, 2, "模型", _modelBox);
+        AddSettingRow(settings, 3, "装备区域", _inventoryRegionBox);
+        AddSettingRow(settings, 4, "匹配阈值%", _inventoryThresholdBox);
 
-        var saveButton = new Button { Text = "保存AI设置", AutoSize = true, Margin = new Padding(0, 12, 0, 0) };
+        var saveButton = new Button { Text = "保存设置", AutoSize = true, Margin = new Padding(0, 12, 0, 0) };
         saveButton.Click += (_, _) => SaveSettingsFromUi();
-        settings.Controls.Add(saveButton, 1, 3);
-        settings.SetColumnSpan(saveButton, 1);
+        settings.Controls.Add(saveButton, 1, 5);
 
         var help = new Label
         {
             AutoSize = true,
-            MaximumSize = new Size(430, 0),
+            MaximumSize = new Size(450, 0),
             Margin = new Padding(0, 18, 0, 0),
-            Text = "兼容 OpenAI 风格 /v1/chat/completions 接口。API地址可填 https://api.openai.com/v1 或你的中转地址；如果直接填写到 /chat/completions 也支持。"
+            Text = "装备区域默认按你提供的 2048×1152 主屏截图校准：8,231,50,50,58,9。程序会按实际游戏屏幕分辨率缩放。AI接口兼容 OpenAI 风格 /v1/chat/completions。"
         };
-        settings.Controls.Add(help, 1, 4);
+        settings.Controls.Add(help, 1, 6);
     }
 
     private static void ConfigureNumber(NumericUpDown box, decimal min, decimal max, decimal value, int width)
@@ -208,6 +237,10 @@ public sealed class AiCoachForm : Form
         _baseUrlBox.Text = _settings.BaseUrl;
         _apiKeyBox.Text = _settings.ApiKey;
         _modelBox.Text = _settings.Model;
+        _autoEquipmentCheck.Checked = _settings.AutoDetectEquipments;
+        _inventoryRegionBox.Text = $"{_settings.InventorySlotX},{_settings.InventorySlotY},{_settings.InventorySlotWidth},{_settings.InventorySlotHeight},{_settings.InventorySlotStepY},{_settings.InventorySlotCount}";
+        decimal threshold = (decimal)(_settings.InventoryMatchThreshold * 100.0);
+        _inventoryThresholdBox.Value = Math.Clamp(threshold, _inventoryThresholdBox.Minimum, _inventoryThresholdBox.Maximum);
     }
 
     private void SaveSettingsFromUi()
@@ -215,23 +248,50 @@ public sealed class AiCoachForm : Form
         _settings.BaseUrl = _baseUrlBox.Text.Trim();
         _settings.ApiKey = _apiKeyBox.Text.Trim();
         _settings.Model = _modelBox.Text.Trim();
+        _settings.AutoDetectEquipments = _autoEquipmentCheck.Checked;
+        _settings.InventoryMatchThreshold = (double)_inventoryThresholdBox.Value / 100.0;
+        ParseInventoryRegion(_inventoryRegionBox.Text);
         _settingsStore.Save(_settings);
-        _statusLabel.Text = "AI 设置已保存。";
+        _statusLabel.Text = "设置已保存。";
+    }
+
+    private void ParseInventoryRegion(string text)
+    {
+        int[] values = text.Split([',', '，'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => int.TryParse(x.Trim(), out int value) ? value : -1)
+            .ToArray();
+        if (values.Length != 6 || values.Any(x => x < 0)) return;
+        _settings.InventorySlotX = values[0];
+        _settings.InventorySlotY = values[1];
+        _settings.InventorySlotWidth = Math.Max(16, values[2]);
+        _settings.InventorySlotHeight = Math.Max(16, values[3]);
+        _settings.InventorySlotStepY = Math.Max(16, values[4]);
+        _settings.InventorySlotCount = Math.Clamp(values[5], 1, 12);
     }
 
     private GameStateSnapshot BuildSnapshot()
     {
+        List<string> autoDetected = _autoEquipmentCheck.Checked ? _inventoryResult.EquipmentNames : [];
+        List<string> autoEmblems = autoDetected.Where(IsEmblem).ToList();
+        List<string> autoEquipments = autoDetected.Where(x => !IsEmblem(x)).ToList();
+
         return new GameStateSnapshot
         {
             ShopHeroes = _stateReader.GetShopHeroes(),
-            Equipments = ParseCsv(_equipmentBox.Text),
+            Equipments = autoEquipments.Concat(ParseCsv(_equipmentBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Augments = ParseCsv(_augmentBox.Text),
-            Emblems = ParseCsv(_emblemBox.Text),
+            Emblems = autoEmblems.Concat(ParseCsv(_emblemBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Stage = _stageBox.Text.Trim(),
             Level = (int)_levelBox.Value,
             Gold = (int)_goldBox.Value,
             Hp = (int)_hpBox.Value
         };
+    }
+
+    private static bool IsEmblem(string name)
+    {
+        return name.EndsWith("纹章", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("转职", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<string> ParseCsv(string value)
@@ -243,9 +303,38 @@ public sealed class AiCoachForm : Form
             .ToList();
     }
 
+    private void RefreshInventory()
+    {
+        if (!_autoEquipmentCheck.Checked)
+        {
+            _autoEquipmentLabel.Text = "自动识别已关闭";
+            return;
+        }
+
+        _inventoryResult = _inventoryRecognizer.Recognize(_settings);
+        if (!string.IsNullOrWhiteSpace(_inventoryResult.Error))
+        {
+            _autoEquipmentLabel.Text = $"识别失败：{_inventoryResult.Error}";
+            return;
+        }
+
+        var detected = _inventoryResult.Slots.Where(x => !string.IsNullOrWhiteSpace(x.Name)).ToList();
+        if (detected.Count == 0)
+        {
+            int nonEmpty = _inventoryResult.Slots.Count(x => !x.IsEmpty);
+            _autoEquipmentLabel.Text = nonEmpty == 0
+                ? "装备栏为空"
+                : $"检测到 {nonEmpty} 个非空槽，但置信度不足；可在设置中降低阈值或保存调试截图。";
+            return;
+        }
+
+        _autoEquipmentLabel.Text = string.Join(" ｜ ", detected.Select(x => $"{x.Name} {x.Confidence:P0}"));
+    }
+
     private void RefreshRecommendations()
     {
         if (IsDisposed) return;
+        RefreshInventory();
         var state = BuildSnapshot();
         _shopLabel.Text = state.ShopHeroes.Length == 0 ? "未识别到商店英雄（请先启用原程序高亮/自动拿牌 OCR）" : string.Join(" ｜ ", state.ShopHeroes);
         var recommendations = _recommendationService.Recommend(state, 5);
@@ -264,9 +353,24 @@ public sealed class AiCoachForm : Form
         _recommendationList.EndUpdate();
     }
 
+    private void SaveInventoryDebugCapture()
+    {
+        try
+        {
+            ParseInventoryRegion(_inventoryRegionBox.Text);
+            string path = _inventoryRecognizer.SaveDebugCapture(_settings);
+            _statusLabel.Text = $"装备区截图已保存：{path}";
+        }
+        catch (Exception ex)
+        {
+            _statusLabel.Text = $"保存装备区截图失败：{ex.Message}";
+        }
+    }
+
     private async Task AnalyzeWithAiAsync()
     {
         SaveSettingsFromUi();
+        RefreshInventory();
         var state = BuildSnapshot();
         var recommendations = _recommendationService.Recommend(state, 5);
         _statusLabel.Text = "正在调用 AI...";
