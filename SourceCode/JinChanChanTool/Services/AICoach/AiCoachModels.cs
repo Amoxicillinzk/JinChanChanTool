@@ -2,7 +2,7 @@ namespace JinChanChanTool.Services.AICoach;
 
 public sealed class AiCoachSettings
 {
-    public int SettingsVersion { get; set; } = 5;
+    public int SettingsVersion { get; set; } = 6;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "gpt-5-mini";
@@ -13,6 +13,13 @@ public sealed class AiCoachSettings
     public bool UseOnlineMeta { get; set; } = true;
     public int OnlineMetaCacheMinutes { get; set; } = 30;
     public bool IncludeLowPickStrongComps { get; set; } = true;
+
+    // V4：手动刷新 Meta 后，使用同一套 AI 配置生成 LineUps.json。
+    // 如果 AI 未配置或单批生成失败，会自动使用规则引擎补齐，确保阵容库仍可更新。
+    public bool GenerateLineUpsWithAi { get; set; } = true;
+    public int LineupGenerationMaxComps { get; set; } = 50;
+    public int LineupGenerationBatchSize { get; set; } = 8;
+    public bool AutoApplyGeneratedLineups { get; set; } = true;
 
     // V2.1：旧的 2D 装备图标模板会把左侧羁绊栏误判为装备，默认关闭。
     public bool AutoDetectEquipments { get; set; } = false;
