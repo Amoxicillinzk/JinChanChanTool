@@ -2,6 +2,7 @@ namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
 /// 游戏 HUD 的实时识别结果。字段使用 nullable，避免一次 OCR 失败把上一次有效值覆盖成 0。
+/// V4.1 在阶段从中后期回跳到 2 阶段时识别为新对局，并清除上一局 HUD 残留。
 /// </summary>
 public sealed class LiveHudSnapshot
 {
@@ -36,6 +37,7 @@ public static class LiveHudState
 
     /// <summary>
     /// 合并一次扫描。只有本轮实际识别成功的字段才覆盖旧值。
+    /// 若检测到上一局中后期 -> 新一局2阶段，则先清空旧局 HUD，避免旧等级/金币/血量污染新局推荐。
     /// </summary>
     public static void Merge(LiveHudSnapshot partial)
     {
@@ -43,6 +45,9 @@ public static class LiveHudState
         lock (Sync)
         {
             DateTime now = partial.CapturedAt == DateTime.MinValue ? DateTime.Now : partial.CapturedAt;
+
+            if (IsNewGameTransition(_current.Stage, partial.Stage))
+                _current = new LiveHudSnapshot();
 
             if (!string.IsNullOrWhiteSpace(partial.Stage))
             {
@@ -70,6 +75,32 @@ public static class LiveHudState
             copy = Clone(_current);
         }
         Changed?.Invoke(copy);
+    }
+
+    public static void Clear()
+    {
+        LiveHudSnapshot copy;
+        lock (Sync)
+        {
+            _current = new LiveHudSnapshot { CapturedAt = DateTime.Now };
+            copy = Clone(_current);
+        }
+        Changed?.Invoke(copy);
+    }
+
+    private static bool IsNewGameTransition(string? previous, string? current)
+    {
+        int previousMajor = ParseStageMajor(previous);
+        int currentMajor = ParseStageMajor(current);
+        return previousMajor >= 3 && currentMajor == 2;
+    }
+
+    private static int ParseStageMajor(string? stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage)) return 0;
+        int dash = stage.IndexOf('-');
+        string major = dash > 0 ? stage[..dash] : stage;
+        return int.TryParse(major.Trim(), out int value) ? value : 0;
     }
 
     private static LiveHudSnapshot Clone(LiveHudSnapshot source)
