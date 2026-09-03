@@ -5,6 +5,7 @@ on:
     branches:
       - feat/ai-coach-v1
       - feat/ai-coach-v2-inventory
+      - feat/ai-coach-v4-meta-lineup-sync
   workflow_dispatch:
 
 jobs:
@@ -50,13 +51,13 @@ jobs:
             [System.IO.File]::WriteAllText((Join-Path $target "LineUps.json"), $json, [System.Text.UTF8Encoding]::new($false))
           }
 
-      - name: Package V3
+      - name: Package V4
         shell: pwsh
-        run: Compress-Archive -Path publish/* -DestinationPath JinChanChanTool-AICoach-V3-win-x64.zip -Force
+        run: Compress-Archive -Path publish/* -DestinationPath JinChanChanTool-AICoach-V4-win-x64.zip -Force
 
-      - name: Upload V3 artifact
+      - name: Upload V4 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JinChanChanTool-AICoach-V3-win-x64
-          path: JinChanChanTool-AICoach-V3-win-x64.zip
+          name: JinChanChanTool-AICoach-V4-win-x64
+          path: JinChanChanTool-AICoach-V4-win-x64.zip
           retention-days: 14
