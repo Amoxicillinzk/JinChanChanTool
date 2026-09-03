@@ -37,6 +37,16 @@ public static class LiveBoardState
         Changed?.Invoke(Clone(copy));
     }
 
+    public static void Clear()
+    {
+        LiveBoardSnapshot copy = new() { CapturedAt = DateTime.Now };
+        lock (Sync)
+        {
+            _current = Clone(copy);
+        }
+        Changed?.Invoke(Clone(copy));
+    }
+
     private static LiveBoardSnapshot Clone(LiveBoardSnapshot source)
     {
         return new LiveBoardSnapshot
