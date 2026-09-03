@@ -41,10 +41,10 @@ public sealed class AiCoachForm : Form
         _inventoryRecognizer = new InventoryRecognitionService(gameAnchor);
         _settings = _settingsStore.Load();
 
-        Text = "AI 云顶教练 V2";
+        Text = "AI 云顶教练 V4.1";
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(660, 820);
-        MinimumSize = new Size(600, 720);
+        Size = new Size(860, 900);
+        MinimumSize = new Size(720, 760);
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
         ShowInTaskbar = true;
 
@@ -84,7 +84,7 @@ public sealed class AiCoachForm : Form
             RowCount = 11,
             AutoScroll = true
         };
-        coach.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        coach.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         coach.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         coachTab.Controls.Add(coach);
 
@@ -110,33 +110,36 @@ public sealed class AiCoachForm : Form
         _autoEquipmentCheck.AutoSize = true;
         _autoEquipmentCheck.Text = "自动识别";
         _autoEquipmentLabel.AutoSize = true;
-        _autoEquipmentLabel.MaximumSize = new Size(390, 0);
-        _autoEquipmentLabel.Text = "等待装备栏截图...";
+        _autoEquipmentLabel.MaximumSize = new Size(560, 0);
+        _autoEquipmentLabel.Text = "装备自动识别默认关闭；当前以手动确认数据为准。";
         autoEquipmentPanel.Controls.Add(_autoEquipmentCheck);
         autoEquipmentPanel.Controls.Add(_autoEquipmentLabel);
-        AddRow(coach, 2, "装备栏", autoEquipmentPanel, 62);
+        AddRow(coach, 2, "装备栏", autoEquipmentPanel, 58);
 
         ConfigureCsvBox(_equipmentBox, "可手动补充/纠错，例如：反曲之弓,暴风之剑");
-        ConfigureCsvBox(_augmentBox, "例如：DD街区,珠光莲花");
-        ConfigureCsvBox(_emblemBox, "可手动补充，例如：花仙子纹章,神谕者纹章");
-        AddRow(coach, 3, "手动补充装备", _equipmentBox);
+        ConfigureCsvBox(_augmentBox, "输入本局已选强化符文；V4.1会直接参与阵容评分");
+        ConfigureCsvBox(_emblemBox, "例如：花仙子纹章,神谕者纹章；V4.1会按目标羁绊加权");
+        AddRow(coach, 3, "确认装备", _equipmentBox);
         AddRow(coach, 4, "强化符文", _augmentBox);
-        AddRow(coach, 5, "手动补充纹章", _emblemBox);
+        AddRow(coach, 5, "纹章/转职", _emblemBox);
 
         _recommendationList.Dock = DockStyle.Fill;
         _recommendationList.View = View.Details;
         _recommendationList.FullRowSelect = true;
         _recommendationList.GridLines = true;
         _recommendationList.ShowItemToolTips = true;
-        _recommendationList.Height = 170;
-        _recommendationList.Columns.Add("阵容", 280);
-        _recommendationList.Columns.Add("匹配度", 80);
-        _recommendationList.Columns.Add("阶段", 70);
-        AddRow(coach, 6, "推荐Top5", _recommendationList, 180);
+        _recommendationList.Height = 210;
+        _recommendationList.Columns.Add("阵容", 210);
+        _recommendationList.Columns.Add("适配分", 62);
+        _recommendationList.Columns.Add("阶段", 54);
+        _recommendationList.Columns.Add("置信度", 62);
+        _recommendationList.Columns.Add("决策", 60);
+        _recommendationList.Columns.Add("现在做", 310);
+        AddRow(coach, 6, "推荐Top5", _recommendationList, 220);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
         var refreshButton = new Button { Text = "刷新推荐", AutoSize = true };
-        var analyzeButton = new Button { Text = "调用AI分析", AutoSize = true };
+        var analyzeButton = new Button { Text = "AI给出8行操作", AutoSize = true };
         var captureButton = new Button { Text = "保存装备区截图", AutoSize = true };
         refreshButton.Click += (_, _) => RefreshRecommendations();
         analyzeButton.Click += async (_, _) => await AnalyzeWithAiAsync();
@@ -147,22 +150,22 @@ public sealed class AiCoachForm : Form
         AddRow(coach, 7, "操作", buttons);
 
         _statusLabel.AutoSize = true;
-        _statusLabel.MaximumSize = new Size(430, 0);
+        _statusLabel.MaximumSize = new Size(630, 0);
         _statusLabel.ForeColor = Color.DimGray;
-        _statusLabel.Text = "V2：商店英雄 + 左侧装备/纹章实时识别；强化符文仍可手动录入。";
-        AddRow(coach, 8, "状态", _statusLabel, 54);
+        _statusLabel.Text = "V4.1：适配分不是胜率；按“决策 + 现在做”执行，低置信度时保留转阵空间。";
+        AddRow(coach, 8, "状态", _statusLabel, 64);
 
         _aiOutput.Dock = DockStyle.Fill;
         _aiOutput.ReadOnly = true;
         _aiOutput.BackColor = SystemColors.Window;
-        _aiOutput.Height = 210;
-        AddRow(coach, 9, "AI建议", _aiOutput, 220);
+        _aiOutput.Height = 180;
+        AddRow(coach, 9, "AI操作指令", _aiOutput, 190);
 
         var policy = new Label
         {
             AutoSize = true,
-            MaximumSize = new Size(430, 0),
-            Text = "提示：请将 AI 建议用于训练/复盘，并遵守游戏及第三方工具的相关规则。",
+            MaximumSize = new Size(630, 0),
+            Text = "说明：任何推荐都不能保证单局结果。V4.1的目标是用当前棋盘、经济、血量与Meta减少常见掉分决策。",
             ForeColor = Color.DimGray
         };
         AddRow(coach, 10, "说明", policy);
@@ -194,9 +197,9 @@ public sealed class AiCoachForm : Form
         var help = new Label
         {
             AutoSize = true,
-            MaximumSize = new Size(450, 0),
+            MaximumSize = new Size(650, 0),
             Margin = new Padding(0, 18, 0, 0),
-            Text = "装备区域默认按你提供的 2048×1152 主屏截图校准：8,231,50,50,58,9。程序会按实际游戏屏幕分辨率缩放。AI接口兼容 OpenAI 风格 /v1/chat/completions。"
+            Text = "AI接口兼容 OpenAI 风格 /v1/chat/completions。V4.1实时推荐本身不依赖每秒调用AI；大模型只在你主动点“AI给出8行操作”或手动刷新Meta生成LineUps时调用。"
         };
         settings.Controls.Add(help, 1, 6);
     }
@@ -274,7 +277,6 @@ public sealed class AiCoachForm : Form
         List<string> autoDetected = _autoEquipmentCheck.Checked ? _inventoryResult.EquipmentNames : [];
         List<string> autoEmblems = autoDetected.Where(IsEmblem).ToList();
         List<string> autoEquipments = autoDetected.Where(x => !IsEmblem(x)).ToList();
-
         return new GameStateSnapshot
         {
             ShopHeroes = _stateReader.GetShopHeroes(),
@@ -289,10 +291,8 @@ public sealed class AiCoachForm : Form
     }
 
     private static bool IsEmblem(string name)
-    {
-        return name.EndsWith("纹章", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("转职", StringComparison.OrdinalIgnoreCase);
-    }
+        => name.EndsWith("纹章", StringComparison.OrdinalIgnoreCase) ||
+           name.Contains("转职", StringComparison.OrdinalIgnoreCase);
 
     private static List<string> ParseCsv(string value)
     {
@@ -307,7 +307,7 @@ public sealed class AiCoachForm : Form
     {
         if (!_autoEquipmentCheck.Checked)
         {
-            _autoEquipmentLabel.Text = "自动识别已关闭";
+            _autoEquipmentLabel.Text = "自动识别已关闭；手动确认装备/纹章仍会完整参与评分。";
             return;
         }
 
@@ -318,16 +318,16 @@ public sealed class AiCoachForm : Form
             return;
         }
 
-        var detected = _inventoryResult.Slots.Where(x => !string.IsNullOrWhiteSpace(x.Name)).ToList();
+        List<InventorySlotResult> detected = _inventoryResult.Slots
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name)).ToList();
         if (detected.Count == 0)
         {
             int nonEmpty = _inventoryResult.Slots.Count(x => !x.IsEmpty);
             _autoEquipmentLabel.Text = nonEmpty == 0
                 ? "装备栏为空"
-                : $"检测到 {nonEmpty} 个非空槽，但置信度不足；可在设置中降低阈值或保存调试截图。";
+                : $"检测到 {nonEmpty} 个非空槽，但置信度不足；请手动录入，不使用低置信度结果。";
             return;
         }
-
         _autoEquipmentLabel.Text = string.Join(" ｜ ", detected.Select(x => $"{x.Name} {x.Confidence:P0}"));
     }
 
@@ -335,23 +335,42 @@ public sealed class AiCoachForm : Form
     {
         if (IsDisposed) return;
         RefreshInventory();
-        var state = BuildSnapshot();
-        _shopLabel.Text = state.ShopHeroes.Length == 0 ? "未识别到商店英雄（请先启用原程序高亮/自动拿牌 OCR）" : string.Join(" ｜ ", state.ShopHeroes);
-        var recommendations = _recommendationService.Recommend(state, 5);
+        GameStateSnapshot state = BuildSnapshot();
+        _shopLabel.Text = state.ShopHeroes.Length == 0
+            ? "未识别到商店英雄；商店本身仅作为弱信号"
+            : string.Join(" ｜ ", state.ShopHeroes);
+        List<LineupRecommendation> recommendations = _recommendationService.Recommend(state, 5);
 
         _recommendationList.BeginUpdate();
         _recommendationList.Items.Clear();
-        foreach (var rec in recommendations)
+        foreach (LineupRecommendation rec in recommendations)
         {
             string stage = rec.StageIndex switch { 0 => "前期", 1 => "中期", _ => "后期" };
             var item = new ListViewItem(rec.Name);
-            item.SubItems.Add($"{rec.Score:0}%");
-            item.SubItems.Add(stage);
+            item.SubItems.Add($"{rec.Score:0}");
+            item.SubItems.Add(stage); // 保持索引2，V4主程序联动依赖这个位置。
+            item.SubItems.Add($"{rec.Confidence:0}%");
+            item.SubItems.Add(rec.Decision);
+            item.SubItems.Add(Shorten(rec.NextAction, 42));
             item.ToolTipText = rec.Reason;
             _recommendationList.Items.Add(item);
         }
         _recommendationList.EndUpdate();
+
+        if (recommendations.Count > 0)
+        {
+            LineupRecommendation best = recommendations[0];
+            string warning = string.IsNullOrWhiteSpace(best.Warning) ? "" : $"｜警告：{best.Warning}";
+            _statusLabel.Text = $"Top1 {best.Name}｜{best.Decision}｜风险{best.RiskLevel}｜{best.NextAction}{warning}";
+        }
+        else
+        {
+            _statusLabel.Text = "当前没有可用推荐；请检查Meta缓存或当前赛季阵容库。";
+        }
     }
+
+    private static string Shorten(string value, int max)
+        => string.IsNullOrWhiteSpace(value) || value.Length <= max ? value : value[..max] + "…";
 
     private void SaveInventoryDebugCapture()
     {
@@ -371,20 +390,20 @@ public sealed class AiCoachForm : Form
     {
         SaveSettingsFromUi();
         RefreshInventory();
-        var state = BuildSnapshot();
-        var recommendations = _recommendationService.Recommend(state, 5);
-        _statusLabel.Text = "正在调用 AI...";
+        GameStateSnapshot state = BuildSnapshot();
+        List<LineupRecommendation> recommendations = _recommendationService.Recommend(state, 5);
+        _statusLabel.Text = "正在调用 AI 生成可执行操作...";
         _aiOutput.Text = "";
         try
         {
             string result = await _aiClient.AnalyzeAsync(_settings, state, recommendations);
             _aiOutput.Text = result;
-            _statusLabel.Text = "AI 分析完成。";
+            _statusLabel.Text = "AI操作指令已更新；优先看结构化Top1的警告和风险，再参考AI解释。";
         }
         catch (Exception ex)
         {
             _aiOutput.Text = ex.Message;
-            _statusLabel.Text = "AI 调用失败。";
+            _statusLabel.Text = "AI调用失败；本地V4.1实时推荐仍可正常使用。";
         }
     }
 }
