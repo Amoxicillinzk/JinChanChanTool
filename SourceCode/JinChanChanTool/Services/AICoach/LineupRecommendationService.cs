@@ -43,6 +43,7 @@ public sealed class LineupRecommendationService
         LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
         int stageIndex = ResolveStageIndex(state);
         Dictionary<string, LineUp> localByName = BuildLocalLineupMap();
+        string currentSelectedName = GetCurrentSelectedLineupName();
         var result = new List<LineupRecommendation>();
         double freshness = WinRateDecisionEngine.MetaFreshnessAdjustment(meta);
         string freshnessWarning = WinRateDecisionEngine.FreshnessWarning(meta);
@@ -54,8 +55,6 @@ public sealed class LineupRecommendationService
                 .ToList();
             if (finalUnits.Count < 3) continue;
 
-            var finalHeroes = finalUnits.Select(u => u.HeroName)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var finalCore = finalUnits
                 .Where(u => u.EquipmentNames.Count(x => !string.IsNullOrWhiteSpace(x)) >= 1)
                 .Select(u => u.HeroName)
@@ -90,6 +89,13 @@ public sealed class LineupRecommendationService
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             List<string> shopFlex = state.ShopHeroes.Where(stageFlex.Contains)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> heldCore = state.HeldHeroes.Where(stageCore.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> heldFlex = state.HeldHeroes.Where(stageFlex.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> contestedCore = state.ContestedHeroes
+                .Where(h => stageCore.Contains(h) || finalCore.Contains(h))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
             (double traitCoverage, List<string> matchedTraits) = MatchBoardTraits(board.Traits, stageHeroes);
             List<string> targetTraits = GetTraits(stageHeroes);
@@ -114,6 +120,7 @@ public sealed class LineupRecommendationService
             WinRateDecisionEngine.AugmentFit augmentFit = WinRateDecisionEngine.ScoreAugments(
                 comp, state.Augments, targetTraits, desiredEquipments);
 
+            bool reroll = IsRerollComp(comp);
             double urgency = state.Hp switch
             {
                 <= 0 => 1.0,
@@ -128,29 +135,52 @@ public sealed class LineupRecommendationService
                 boardScore = Math.Min(26, boardFlex.Count * 7.5 * urgency);
 
             double traitScore = Math.Min(18, traitCoverage * 18.0);
-            double shopScore = Math.Min(10,
-                shopCore.Count * 3.5 + shopFlex.Count * 1.3);
-            double itemScore = Math.Min(13,
-                directMatches.Count * 4.0 + componentMatches.Count * 1.6);
+            double shopScore = Math.Min(10, shopCore.Count * 3.5 + shopFlex.Count * 1.3);
+            double heldScore = Math.Min(12, heldCore.Count * 5.0 + heldFlex.Count * 1.5);
+            double itemScore = Math.Min(13, directMatches.Count * 4.0 + componentMatches.Count * 1.6);
             double metaScore = WinRateDecisionEngine.CalculateMetaStrength(comp);
             double strategyScore = WinRateDecisionEngine.CalculateStrategicFit(comp, state);
             double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, stageHeroes, state);
+            double contestPenalty = contestedCore.Count == 0
+                ? 0
+                : reroll
+                    ? Math.Min(28, contestedCore.Count * 10.0)
+                    : Math.Min(14, contestedCore.Count * 4.5);
+
+            bool sameAsCurrent = !string.IsNullOrWhiteSpace(currentSelectedName) &&
+                NormalizeName(currentSelectedName) == NormalizeName(comp.Name);
+            double continuityBonus = sameAsCurrent && stageIndex >= 1 && augmentFit.Score > -15 && strategyScore > -12
+                ? stageIndex == 1 ? 4.0 : 6.0
+                : 0;
+
+            string contestWarning = contestedCore.Count == 0
+                ? ""
+                : reroll
+                    ? $"追三核心被同行争抢：{string.Join("、", contestedCore)}；数量不领先时应准备转阵。"
+                    : $"核心牌被同行争抢：{string.Join("、", contestedCore)}；预计搜牌成本上升。";
+            string warning = JoinWarnings(augmentFit.Warning, contestWarning, freshnessWarning);
 
             double score = Math.Clamp(
-                4 + boardScore + traitScore + shopScore + itemScore +
-                emblemFit.Score + augmentFit.Score + metaScore + strategyScore + freshness - transitionPenalty,
+                4 + boardScore + traitScore + shopScore + heldScore + itemScore +
+                emblemFit.Score + augmentFit.Score + metaScore + strategyScore + freshness + continuityBonus -
+                transitionPenalty - contestPenalty,
                 0, 100);
 
             List<string> matchedHeroes = boardCore.Concat(boardFlex).Concat(shopCore).Concat(shopFlex)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> matchedHeld = heldCore.Concat(heldFlex)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             List<string> matchedEquipments = directMatches.Concat(componentMatches)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             double confidence = WinRateDecisionEngine.CalculateConfidence(
-                state, board, meta, matchedHeroes.Count, matchedEquipments.Count);
+                state, board, meta, matchedHeroes.Count + matchedHeld.Count, matchedEquipments.Count);
+            if (state.HeldHeroes.Count > 0) confidence = Math.Min(100, confidence + 4);
+            if (state.ContestedHeroes.Count > 0) confidence = Math.Min(100, confidence + 4);
 
-            string warning = JoinWarnings(augmentFit.Warning, freshnessWarning);
             string risk = WinRateDecisionEngine.ClassifyRisk(score, confidence, strategyScore, warning);
             string action = WinRateDecisionEngine.BuildNextAction(comp, state, stageIndex);
+            if (contestedCore.Count > 0 && reroll)
+                action += " 若下一轮核心数量仍不领先，不再无上限追三。";
 
             result.Add(new LineupRecommendation
             {
@@ -159,6 +189,8 @@ public sealed class LineupRecommendationService
                 Confidence = confidence,
                 StageIndex = stageIndex,
                 MatchedHeroes = matchedHeroes,
+                MatchedHeldHeroes = matchedHeld,
+                ContestedCoreHeroes = contestedCore,
                 MatchedEquipments = matchedEquipments,
                 MatchedAugments = augmentFit.Matches,
                 MatchedEmblems = emblemFit.Matches,
@@ -174,8 +206,9 @@ public sealed class LineupRecommendationService
                 MetaTags = comp.Tags.ToList(),
                 Reason = BuildOnlineReason(
                     comp, stageIndex, boardCore, boardFlex, matchedTraits, shopCore, shopFlex,
-                    directMatches, componentMatches, augmentFit.Matches, emblemFit.Matches,
-                    traitCoverage, strategyScore, transitionPenalty, warning, action)
+                    heldCore, heldFlex, contestedCore, directMatches, componentMatches,
+                    augmentFit.Matches, emblemFit.Matches, traitCoverage, strategyScore,
+                    transitionPenalty, contestPenalty, continuityBonus, warning, action)
             });
         }
 
@@ -186,6 +219,24 @@ public sealed class LineupRecommendationService
             .ThenByDescending(x => x.MetaTopFourRate)
             .Take(Math.Max(1, top))
             .ToList();
+
+        // V4.1 防抖：中后期如果当前已选路线仍在Top3且与新Top1差距不到4.5分，
+        // 继续保持当前路线，避免OCR波动或单轮商店导致无意义大转阵。
+        if (stageIndex >= 1 && !string.IsNullOrWhiteSpace(currentSelectedName) && ordered.Count > 1)
+        {
+            int currentIndex = ordered.FindIndex(x =>
+                NormalizeName(x.Name) == NormalizeName(currentSelectedName));
+            if (currentIndex is > 0 and <= 2)
+            {
+                LineupRecommendation current = ordered[currentIndex];
+                if (ordered[0].Score - current.Score < 4.5 && current.RiskLevel != "高")
+                {
+                    ordered.RemoveAt(currentIndex);
+                    ordered.Insert(0, current);
+                    current.Reason += "；V4.1防抖：与新候选差距很小，保持当前路线以避免高成本无意义转阵";
+                }
+            }
+        }
 
         for (int i = 0; i < ordered.Count; i++)
         {
@@ -204,6 +255,7 @@ public sealed class LineupRecommendationService
     {
         int stageIndex = ResolveStageIndex(state);
         LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
+        string currentSelectedName = GetCurrentSelectedLineupName();
         var result = new List<LineupRecommendation>();
 
         foreach (LineUp lineUp in _lineUpService.GetLineUps())
@@ -223,6 +275,10 @@ public sealed class LineupRecommendationService
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             List<string> matchedBoardHeroes = board.InferredHeroes.Where(heroSet.Contains)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> matchedHeldHeroes = state.HeldHeroes.Where(heroSet.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> contestedHeroes = state.ContestedHeroes.Where(heroSet.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             (double traitCoverage, List<string> matchedTraits) = MatchBoardTraits(board.Traits, heroSet);
             List<string> owned = state.Equipments.Concat(state.Emblems)
                 .Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
@@ -232,18 +288,26 @@ public sealed class LineupRecommendationService
             WinRateDecisionEngine.EmblemFit emblemFit = WinRateDecisionEngine.ScoreEmblems(state.Emblems, targetTraits);
 
             double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, heroSet, state);
+            double continuityBonus = stageIndex >= 1 && NormalizeName(lineUp.LineUpName) == NormalizeName(currentSelectedName) ? 4 : 0;
+            double contestPenalty = Math.Min(12, contestedHeroes.Count * 4.0);
             double score = Math.Clamp(
                 8 + matchedBoardHeroes.Count * 11.0 + traitCoverage * 24.0 + matchedShopHeroes.Count * 3.0 +
-                directMatches.Count * 5.0 + componentMatches.Count * 2.0 + emblemFit.Score - transitionPenalty,
+                matchedHeldHeroes.Count * 3.5 + directMatches.Count * 5.0 + componentMatches.Count * 2.0 +
+                emblemFit.Score + continuityBonus - transitionPenalty - contestPenalty,
                 0, 100);
             double confidence = Math.Clamp(25 + (board.HasBoardSignal ? 30 : 0) +
-                (state.Equipments.Count > 0 ? 15 : 0) + (state.Level > 0 ? 10 : 0), 20, 80);
+                (state.Equipments.Count > 0 ? 15 : 0) + (state.Level > 0 ? 10 : 0) +
+                (state.HeldHeroes.Count > 0 ? 5 : 0) + (state.ContestedHeroes.Count > 0 ? 5 : 0), 20, 85);
             string action = stageIndex switch
             {
                 0 => "在线Meta不可用：先用本地前期模板保血，不要提前锁死高费阵容。",
                 1 => "在线Meta不可用：按本地中期骨架补质量，保持经济与血量平衡。",
                 _ => "在线Meta不可用：按本地后期阵容补核心两星，并尽快恢复在线Meta。"
             };
+
+            string warning = contestedHeroes.Count > 0
+                ? $"本地目标棋子被同行争抢：{string.Join("、", contestedHeroes)}。"
+                : "当前未使用在线Meta，建议在安全时手动刷新Meta阵容。";
 
             result.Add(new LineupRecommendation
             {
@@ -254,14 +318,17 @@ public sealed class LineupRecommendationService
                 Source = "本地阵容兜底",
                 MatchedHeroes = matchedBoardHeroes.Concat(matchedShopHeroes)
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                MatchedHeldHeroes = matchedHeldHeroes,
+                ContestedCoreHeroes = contestedHeroes,
                 MatchedEquipments = directMatches.Concat(componentMatches)
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 MatchedEmblems = emblemFit.Matches,
-                RiskLevel = "中",
+                RiskLevel = contestedHeroes.Count >= 2 ? "高" : "中",
                 NextAction = action,
-                Warning = "当前未使用在线Meta，建议在安全时手动刷新Meta阵容。",
+                Warning = warning,
                 Reason = BuildFallbackReason(matchedBoardHeroes, matchedTraits, matchedShopHeroes,
-                    directMatches, componentMatches, emblemFit.Matches, safeIndex, traitCoverage, action)
+                    matchedHeldHeroes, contestedHeroes, directMatches, componentMatches, emblemFit.Matches,
+                    safeIndex, traitCoverage, action)
             });
         }
 
@@ -271,7 +338,9 @@ public sealed class LineupRecommendationService
             .Take(Math.Max(1, top)).ToList();
         for (int i = 0; i < ordered.Count; i++)
         {
-            ordered[i].Decision = i == 0 && ordered[i].Score >= 58 ? "主推" : i <= 1 ? "观察" : "备选";
+            ordered[i].Decision = i == 0 && ordered[i].Score >= 58 && ordered[i].RiskLevel != "高"
+                ? "主推"
+                : i <= 1 ? "观察" : "备选";
             ordered[i].Reason += $"；V4.1决策：{ordered[i].Decision}，置信度{ordered[i].Confidence:0}%";
         }
         return ordered;
@@ -283,6 +352,12 @@ public sealed class LineupRecommendationService
             .Where(x => !string.IsNullOrWhiteSpace(x.LineUpName))
             .GroupBy(x => NormalizeName(x.LineUpName), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private string GetCurrentSelectedLineupName()
+    {
+        try { return _lineUpService.GetCurrentLineUp()?.LineUpName ?? ""; }
+        catch { return ""; }
     }
 
     private static List<LineUpUnit> GetStageUnits(Dictionary<string, LineUp> map, string compName, int stageIndex)
@@ -419,6 +494,14 @@ public sealed class LineupRecommendationService
         return 2;
     }
 
+    private static bool IsRerollComp(OnlineMetaComp comp)
+    {
+        string tags = string.Join(" ", comp.Tags).ToLowerInvariant();
+        return tags.Contains("reroll") || tags.Contains("d牌") || tags.Contains("刷新") ||
+               tags.Contains("5级d") || tags.Contains("6级d") || tags.Contains("7级d") ||
+               tags.Contains("level 5") || tags.Contains("level 6") || tags.Contains("level 7");
+    }
+
     private static string BuildOnlineReason(
         OnlineMetaComp comp,
         int stageIndex,
@@ -427,6 +510,9 @@ public sealed class LineupRecommendationService
         List<string> matchedTraits,
         List<string> shopCore,
         List<string> shopFlex,
+        List<string> heldCore,
+        List<string> heldFlex,
+        List<string> contestedCore,
         List<string> directEquipments,
         List<string> components,
         List<string> augmentMatches,
@@ -434,6 +520,8 @@ public sealed class LineupRecommendationService
         double traitCoverage,
         double strategyScore,
         double transitionPenalty,
+        double contestPenalty,
+        double continuityBonus,
         string warning,
         string action)
     {
@@ -447,12 +535,16 @@ public sealed class LineupRecommendationService
         if (boardCore.Count > 0) parts.Add($"上场核心：{string.Join("、", boardCore)}");
         if (boardFlex.Count > 0) parts.Add($"上场过渡：{string.Join("、", boardFlex)}");
         if (matchedTraits.Count > 0) parts.Add($"羁绊覆盖{traitCoverage:P0}：{string.Join("、", matchedTraits)}");
+        if (heldCore.Count > 0) parts.Add($"持有核心：{string.Join("、", heldCore)}");
+        if (heldFlex.Count > 0) parts.Add($"持有过渡：{string.Join("、", heldFlex)}");
         if (shopCore.Count > 0) parts.Add($"商店核心：{string.Join("、", shopCore)}");
         if (shopFlex.Count > 0) parts.Add($"商店可留：{string.Join("、", shopFlex)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
         if (augmentMatches.Count > 0) parts.Add($"强化适配：{string.Join("、", augmentMatches)}");
         if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
+        if (contestedCore.Count > 0) parts.Add($"同行争抢：{string.Join("、", contestedCore)}(-{contestPenalty:0})");
+        if (continuityBonus > 0) parts.Add($"当前已走该路线，减少无意义转阵(+{continuityBonus:0})");
         if (comp.Tags.Count > 0) parts.Add($"运营标签：{string.Join("/", comp.Tags.Take(4))}");
         if (strategyScore >= 5) parts.Add("当前等级/经济/血量契合该运营节奏");
         if (strategyScore <= -5) parts.Add("当前局面与该运营节奏冲突");
@@ -466,6 +558,8 @@ public sealed class LineupRecommendationService
         List<string> boardHeroes,
         List<string> matchedTraits,
         List<string> shopHeroes,
+        List<string> heldHeroes,
+        List<string> contestedHeroes,
         List<string> directEquipments,
         List<string> components,
         List<string> emblemMatches,
@@ -477,10 +571,12 @@ public sealed class LineupRecommendationService
         var parts = new List<string> { $"在线Meta不可用，按本地{stage}阵容兜底" };
         if (boardHeroes.Count > 0) parts.Add($"上场命中：{string.Join("、", boardHeroes)}");
         if (matchedTraits.Count > 0) parts.Add($"羁绊覆盖{traitCoverage:P0}：{string.Join("、", matchedTraits)}");
+        if (heldHeroes.Count > 0) parts.Add($"持有：{string.Join("、", heldHeroes)}");
         if (shopHeroes.Count > 0) parts.Add($"商店命中：{string.Join("、", shopHeroes)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
         if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
+        if (contestedHeroes.Count > 0) parts.Add($"同行争抢：{string.Join("、", contestedHeroes)}");
         parts.Add($"下一步：{action}");
         return string.Join("；", parts);
     }
