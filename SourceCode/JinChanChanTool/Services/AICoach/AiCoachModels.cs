@@ -2,24 +2,25 @@ namespace JinChanChanTool.Services.AICoach;
 
 public sealed class AiCoachSettings
 {
-    public int SettingsVersion { get; set; } = 6;
+    public int SettingsVersion { get; set; } = 7;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "gpt-5-mini";
     public bool AutoRefresh { get; set; } = true;
     public int RefreshIntervalMs { get; set; } = 1000;
 
-    // V3：实时在线 Meta 为主，本地 LineUps.json 仅在断网/在线数据不可用时兜底。
     public bool UseOnlineMeta { get; set; } = true;
     public int OnlineMetaCacheMinutes { get; set; } = 30;
     public bool IncludeLowPickStrongComps { get; set; } = true;
 
-    // V4：手动刷新 Meta 后，使用同一套 AI 配置生成 LineUps.json。
-    // 如果 AI 未配置或单批生成失败，会自动使用规则引擎补齐，确保阵容库仍可更新。
     public bool GenerateLineUpsWithAi { get; set; } = true;
     public int LineupGenerationMaxComps { get; set; } = 50;
     public int LineupGenerationBatchSize { get; set; } = 8;
     public bool AutoApplyGeneratedLineups { get; set; } = true;
+
+    // V4.1：推荐引擎优先目标是稳定吃分。低血量时提高当前战力/转阵成本权重，
+    // 高血量高经济时允许追求更高上限。该开关保留给后续实验模式。
+    public bool WinRateDecisionMode { get; set; } = true;
 
     // V2.1：旧的 2D 装备图标模板会把左侧羁绊栏误判为装备，默认关闭。
     public bool AutoDetectEquipments { get; set; } = false;
@@ -35,7 +36,6 @@ public sealed class AiCoachSettings
     public double InventoryEmptyMeanThreshold { get; set; } = 24.0;
     public double InventoryEmptyStdThreshold { get; set; } = 26.0;
 
-    // V2.1：读取左侧“上场羁绊”面板，再结合 S18 HeroData 反推当前棋盘。
     public bool AutoDetectBoardTraits { get; set; } = true;
     public int BoardReferenceWidth { get; set; } = 2048;
     public int BoardReferenceHeight { get; set; } = 1152;
@@ -50,7 +50,6 @@ public sealed class AiCoachSettings
     public int BoardLevelWidth { get; set; } = 135;
     public int BoardLevelHeight { get; set; } = 55;
 
-    // V2.2：局面 HUD 实时读取。基准坐标来自用户 2048x1152 国服云顶实战截图。
     public bool AutoDetectHud { get; set; } = true;
     public int HudRefreshIntervalMs { get; set; } = 1000;
     public int HudReferenceWidth { get; set; } = 2048;
@@ -93,12 +92,21 @@ public sealed class LineupRecommendation
 {
     public string Name { get; set; } = "";
     public double Score { get; set; }
+    public double Confidence { get; set; }
     public int StageIndex { get; set; }
     public List<string> MatchedHeroes { get; set; } = [];
     public List<string> MatchedEquipments { get; set; } = [];
+    public List<string> MatchedAugments { get; set; } = [];
+    public List<string> MatchedEmblems { get; set; } = [];
+
+    // V4.1：让普通用户可以直接照着执行，而不是只看一个抽象匹配分。
+    // Decision: 锁定 / 主推 / 观察 / 备选 / 不建议
+    public string Decision { get; set; } = "观察";
+    public string RiskLevel { get; set; } = "中";
+    public string NextAction { get; set; } = "保持经济，继续观察下一轮。";
+    public string Warning { get; set; } = "";
     public string Reason { get; set; } = "";
 
-    // V3 在线 Meta 信息。UI 和 AI Prompt 都可直接使用。
     public string Source { get; set; } = "本地";
     public string MetaTier { get; set; } = "";
     public double MetaWinRate { get; set; }
