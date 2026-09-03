@@ -2,7 +2,7 @@ namespace JinChanChanTool.Services.AICoach;
 
 public sealed class AiCoachSettings
 {
-    public int SettingsVersion { get; set; } = 7;
+    public int SettingsVersion { get; set; } = 8;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "gpt-5-mini";
@@ -18,11 +18,8 @@ public sealed class AiCoachSettings
     public int LineupGenerationBatchSize { get; set; } = 8;
     public bool AutoApplyGeneratedLineups { get; set; } = true;
 
-    // V4.1：推荐引擎优先目标是稳定吃分。低血量时提高当前战力/转阵成本权重，
-    // 高血量高经济时允许追求更高上限。该开关保留给后续实验模式。
     public bool WinRateDecisionMode { get; set; } = true;
 
-    // V2.1：旧的 2D 装备图标模板会把左侧羁绊栏误判为装备，默认关闭。
     public bool AutoDetectEquipments { get; set; } = false;
     public int InventoryReferenceWidth { get; set; } = 2048;
     public int InventoryReferenceHeight { get; set; } = 1152;
@@ -82,6 +79,13 @@ public sealed class GameStateSnapshot
     public List<string> Equipments { get; set; } = [];
     public List<string> Augments { get; set; } = [];
     public List<string> Emblems { get; set; } = [];
+
+    // 用户可选输入：备战席/已持有的关键牌。它们比单轮商店更有方向价值，但弱于已经上场的棋盘。
+    public List<string> HeldHeroes { get; set; } = [];
+
+    // 用户可选输入：明显被同行争抢的核心牌。reroll阵容会对此给予更强惩罚。
+    public List<string> ContestedHeroes { get; set; } = [];
+
     public string Stage { get; set; } = "";
     public int Level { get; set; }
     public int Gold { get; set; }
@@ -98,9 +102,9 @@ public sealed class LineupRecommendation
     public List<string> MatchedEquipments { get; set; } = [];
     public List<string> MatchedAugments { get; set; } = [];
     public List<string> MatchedEmblems { get; set; } = [];
+    public List<string> MatchedHeldHeroes { get; set; } = [];
+    public List<string> ContestedCoreHeroes { get; set; } = [];
 
-    // V4.1：让普通用户可以直接照着执行，而不是只看一个抽象匹配分。
-    // Decision: 锁定 / 主推 / 观察 / 备选 / 不建议
     public string Decision { get; set; } = "观察";
     public string RiskLevel { get; set; } = "中";
     public string NextAction { get; set; } = "保持经济，继续观察下一轮。";
