@@ -99,7 +99,8 @@ public sealed class AiCoachForm : Form
         _stageBox.PlaceholderText = "3-2";
         ConfigureNumber(_levelBox, 0, 15, 0, 48);
         ConfigureNumber(_goldBox, 0, 200, 0, 58);
-        ConfigureNumber(_hpBox, 0, 100, 100, 58);
+        // 0 表示“未知/尚未识别”，不能在 HUD OCR 未成功前假设满血100。
+        ConfigureNumber(_hpBox, 0, 100, 0, 58);
         statePanel.Controls.AddRange([
             new Label { Text = "阶段", AutoSize = true, Padding = new Padding(0,7,0,0) }, _stageBox,
             new Label { Text = "等级", AutoSize = true, Padding = new Padding(8,7,0,0) }, _levelBox,
@@ -158,7 +159,7 @@ public sealed class AiCoachForm : Form
         _statusLabel.AutoSize = true;
         _statusLabel.MaximumSize = new Size(670, 0);
         _statusLabel.ForeColor = Color.DimGray;
-        _statusLabel.Text = "V4.1：适配分不是胜率；追三星阵容建议录入核心持有数量和同行数量。";
+        _statusLabel.Text = "V4.1：局面数值为0表示尚未识别/未知；追三星阵容建议录入核心持有数量和同行数量。";
         AddRow(coach, 10, "状态", _statusLabel, 64);
 
         _aiOutput.Dock = DockStyle.Fill;
