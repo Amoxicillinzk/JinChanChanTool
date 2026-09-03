@@ -49,7 +49,7 @@ public static class AiCoachBootstrap
             int y = Math.Max(working.Top + 8, Math.Min(main.Top, working.Bottom - _coachForm.Height));
             _coachForm.Location = new Point(Math.Max(working.Left, x), y);
 
-            ApplyV4UiState(_coachForm);
+            ApplyV41UiState(_coachForm);
             LiveBoardState.Changed += OnBoardStateChanged;
             LiveHudState.Changed += OnHudStateChanged;
             OnlineMetaState.Changed += OnOnlineMetaChanged;
@@ -60,8 +60,8 @@ public static class AiCoachBootstrap
             _hudWatcher = new HudStateWatcher(main, cardService);
             _hudWatcher.Start();
 
-            // V4：启动时只读取上次手动刷新生成时使用的 Meta 缓存。
-            // 不后台访问网络，避免 AI 教练与 LineUps.json 漂移成两个版本。
+            // V4.1：启动只读取上次手动刷新使用的 Meta 固定快照。
+            // 不后台联网换版本，确保 AI 教练与 LineUps.json 始终对应同一批数据。
             _onlineMetaService = new OnlineMetaService();
             _onlineMetaService.LoadCacheOnly();
 
@@ -90,7 +90,7 @@ public static class AiCoachBootstrap
         }
     }
 
-    private static void ApplyV4UiState(AiCoachForm form)
+    private static void ApplyV41UiState(AiCoachForm form)
     {
         try
         {
@@ -102,20 +102,20 @@ public static class AiCoachBootstrap
             }
             if (typeof(AiCoachForm).GetField("_autoEquipmentLabel", flags)?.GetValue(form) is Label equipmentLabel)
             {
-                equipmentLabel.Text = "装备自动识别暂时关闭：后续改为悬停 Tooltip OCR，当前可手动补充。";
+                equipmentLabel.Text = "装备自动识别暂时关闭：当前请手动确认；低置信数据不会参与决策。";
             }
             if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
             {
                 OnlineMetaSnapshot meta = OnlineMetaState.GetSnapshot();
                 statusLabel.Text = meta.HasData
-                    ? $"V4：已载入上次手动刷新 Meta（{meta.Comps.Count}套）。点主程序“刷新Meta阵容”才会更新版本并重建LineUps.json。"
-                    : "V4：尚无固定Meta快照，请在主程序菜单点击“刷新Meta阵容”。";
+                    ? $"V4.1：已载入固定Meta（{meta.Comps.Count}套）。适配分不是胜率；按决策/风险/现在做执行。"
+                    : "V4.1：尚无固定Meta快照，请在主程序菜单点击“刷新Meta阵容”。";
             }
-            form.Text = "AI 云顶教练 V4｜Meta与阵容库同步模式";
+            form.Text = "AI 云顶教练 V4.1｜胜率决策引擎";
         }
         catch
         {
-            form.Text = "AI 云顶教练 V4";
+            form.Text = "AI 云顶教练 V4.1";
         }
     }
 
@@ -135,7 +135,8 @@ public static class AiCoachBootstrap
                     if (snapshot.HasData)
                     {
                         string cache = snapshot.FromCache ? "（固定缓存）" : "（刚手动刷新）";
-                        statusLabel.Text = $"Meta：{snapshot.Source}{cache}，{snapshot.Comps.Count}套，版本快照时间 {snapshot.UpdatedAt:MM-dd HH:mm}。主程序与AI教练共用此快照。";
+                        string stale = (DateTime.Now - snapshot.UpdatedAt).TotalHours > 48 ? "，数据偏旧，建议重新刷新" : "";
+                        statusLabel.Text = $"Meta：{snapshot.Source}{cache}，{snapshot.Comps.Count}套，快照 {snapshot.UpdatedAt:MM-dd HH:mm}{stale}。";
                     }
                     else if (!string.IsNullOrWhiteSpace(snapshot.Error))
                     {
@@ -199,11 +200,11 @@ public static class AiCoachBootstrap
         string metaText = meta.HasData ? $"｜Meta {meta.Comps.Count}套" : "｜Meta未刷新";
 
         if (board.InferredHeroes.Count > 0)
-            form.Text = $"AI 云顶教练 V4{hudText}{metaText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
+            form.Text = $"AI 云顶教练 V4.1{hudText}{metaText}｜可靠上场：{string.Join(" / ", board.InferredHeroes)}";
         else if (board.Traits.Count > 0)
-            form.Text = $"AI 云顶教练 V4{hudText}{metaText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
+            form.Text = $"AI 云顶教练 V4.1{hudText}{metaText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
         else
-            form.Text = $"AI 云顶教练 V4{hudText}{metaText}";
+            form.Text = $"AI 云顶教练 V4.1{hudText}{metaText}";
     }
 
     private static string BuildHudTitle(LiveHudSnapshot hud)
