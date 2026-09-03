@@ -121,8 +121,8 @@ public sealed class AiCoachForm : Form
         ConfigureCsvBox(_equipmentBox, "可手动补充/纠错，例如：反曲之弓,暴风之剑");
         ConfigureCsvBox(_augmentBox, "输入本局已选强化符文；V4.1会直接参与阵容评分");
         ConfigureCsvBox(_emblemBox, "例如：花仙子纹章,神谕者纹章；V4.1会按目标羁绊加权");
-        ConfigureCsvBox(_heldHeroesBox, "可选：备战席/手里关键牌，例如：易,蔚,雷恩加尔");
-        ConfigureCsvBox(_contestedHeroesBox, "可选：明显被同行卡的核心，例如：维迦,卡西奥佩娅");
+        ConfigureCsvBox(_heldHeroesBox, "可写数量：易*7,蔚*5；不写数量默认1张");
+        ConfigureCsvBox(_contestedHeroesBox, "同行数量：维迦*6,卡西奥佩娅*4；不确定可只写名字");
         AddRow(coach, 3, "确认装备", _equipmentBox);
         AddRow(coach, 4, "强化符文", _augmentBox);
         AddRow(coach, 5, "纹章/转职", _emblemBox);
@@ -158,7 +158,7 @@ public sealed class AiCoachForm : Form
         _statusLabel.AutoSize = true;
         _statusLabel.MaximumSize = new Size(670, 0);
         _statusLabel.ForeColor = Color.DimGray;
-        _statusLabel.Text = "V4.1：适配分不是胜率；按“决策 + 现在做”执行，低置信度时保留转阵空间。";
+        _statusLabel.Text = "V4.1：适配分不是胜率；追三星阵容建议录入核心持有数量和同行数量。";
         AddRow(coach, 10, "状态", _statusLabel, 64);
 
         _aiOutput.Dock = DockStyle.Fill;
@@ -283,14 +283,19 @@ public sealed class AiCoachForm : Form
         List<string> autoDetected = _autoEquipmentCheck.Checked ? _inventoryResult.EquipmentNames : [];
         List<string> autoEmblems = autoDetected.Where(IsEmblem).ToList();
         List<string> autoEquipments = autoDetected.Where(x => !IsEmblem(x)).ToList();
+        Dictionary<string, int> heldCounts = HeroCountParser.Parse(_heldHeroesBox.Text);
+        Dictionary<string, int> contestedCounts = HeroCountParser.Parse(_contestedHeroesBox.Text);
+
         return new GameStateSnapshot
         {
             ShopHeroes = _stateReader.GetShopHeroes(),
             Equipments = autoEquipments.Concat(ParseCsv(_equipmentBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Augments = ParseCsv(_augmentBox.Text),
             Emblems = autoEmblems.Concat(ParseCsv(_emblemBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            HeldHeroes = ParseCsv(_heldHeroesBox.Text),
-            ContestedHeroes = ParseCsv(_contestedHeroesBox.Text),
+            HeldHeroes = HeroCountParser.Names(heldCounts),
+            ContestedHeroes = HeroCountParser.Names(contestedCounts),
+            HeldHeroCounts = heldCounts,
+            ContestedHeroCounts = contestedCounts,
             Stage = _stageBox.Text.Trim(),
             Level = (int)_levelBox.Value,
             Gold = (int)_goldBox.Value,
@@ -369,7 +374,8 @@ public sealed class AiCoachForm : Form
         {
             LineupRecommendation best = recommendations[0];
             string warning = string.IsNullOrWhiteSpace(best.Warning) ? "" : $"｜警告：{best.Warning}";
-            _statusLabel.Text = $"Top1 {best.Name}｜{best.Decision}｜风险{best.RiskLevel}｜{best.NextAction}{warning}";
+            string copies = best.MatchedHeldCopies > 1 ? $"｜持有核心{best.MatchedHeldCopies}张" : "";
+            _statusLabel.Text = $"Top1 {best.Name}｜{best.Decision}｜风险{best.RiskLevel}{copies}｜{best.NextAction}{warning}";
         }
         else
         {
