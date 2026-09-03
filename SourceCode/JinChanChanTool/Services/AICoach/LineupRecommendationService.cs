@@ -34,11 +34,7 @@ public sealed class LineupRecommendationService
     {
         EnsureMetadataLoaded();
         OnlineMetaSnapshot meta = OnlineMetaState.GetSnapshot();
-
-        // V3：只要已有在线 Meta（包括最近一次缓存），就不再让人工维护的30套静态阵容主导推荐。
-        if (meta.HasData)
-            return RecommendOnline(state, meta, top);
-
+        if (meta.HasData) return RecommendOnline(state, meta, top);
         return RecommendLocalFallback(state, top);
     }
 
@@ -46,66 +42,129 @@ public sealed class LineupRecommendationService
     {
         LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
         int stageIndex = ResolveStageIndex(state);
+        Dictionary<string, LineUp> localByName = BuildLocalLineupMap();
         var result = new List<LineupRecommendation>();
+        double freshness = WinRateDecisionEngine.MetaFreshnessAdjustment(meta);
+        string freshnessWarning = WinRateDecisionEngine.FreshnessWarning(meta);
 
         foreach (OnlineMetaComp comp in meta.Comps)
         {
-            var units = comp.Units.Where(u => !string.IsNullOrWhiteSpace(u.HeroName)).ToList();
-            if (units.Count < 3) continue;
+            List<OnlineMetaUnit> finalUnits = comp.Units
+                .Where(u => !string.IsNullOrWhiteSpace(u.HeroName))
+                .ToList();
+            if (finalUnits.Count < 3) continue;
 
-            var allHeroes = units.Select(u => u.HeroName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var coreHeroes = units
+            var finalHeroes = finalUnits.Select(u => u.HeroName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var finalCore = finalUnits
                 .Where(u => u.EquipmentNames.Count(x => !string.IsNullOrWhiteSpace(x)) >= 1)
                 .Select(u => u.HeroName)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var flexHeroes = allHeroes.Where(x => !coreHeroes.Contains(x)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // 在线详情偶尔拿不到装备时，不胡乱指定核心；此时所有英雄按普通权重处理。
-            var boardCore = board.InferredHeroes.Where(coreHeroes.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var boardFlex = board.InferredHeroes.Where(flexHeroes.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var shopCore = state.ShopHeroes.Where(coreHeroes.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var shopFlex = state.ShopHeroes.Where(flexHeroes.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<LineUpUnit> stageUnits = GetStageUnits(localByName, comp.Name, stageIndex);
+            if (stageUnits.Count < 3)
+            {
+                stageUnits = finalUnits.Select(u => new LineUpUnit
+                {
+                    HeroName = u.HeroName,
+                    EquipmentNames = u.EquipmentNames.ToArray(),
+                    Position = (u.PositionRow, u.PositionColumn)
+                }).ToList();
+            }
 
-            (double traitCoverage, List<string> matchedTraits) = MatchBoardTraits(board.Traits, allHeroes);
+            var stageHeroes = stageUnits.Select(u => u.HeroName)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stageCore = stageUnits
+                .Where(u => (u.EquipmentNames ?? []).Any(x => !string.IsNullOrWhiteSpace(x)) || finalCore.Contains(u.HeroName))
+                .Select(u => u.HeroName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stageFlex = stageHeroes.Where(x => !stageCore.Contains(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            List<string> desiredEquipments = units
-                .SelectMany(u => u.EquipmentNames)
+            List<string> boardCore = board.InferredHeroes.Where(stageCore.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> boardFlex = board.InferredHeroes.Where(stageFlex.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> shopCore = state.ShopHeroes.Where(stageCore.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            List<string> shopFlex = state.ShopHeroes.Where(stageFlex.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            (double traitCoverage, List<string> matchedTraits) = MatchBoardTraits(board.Traits, stageHeroes);
+            List<string> targetTraits = GetTraits(stageHeroes);
+
+            List<string> desiredEquipments = stageUnits
+                .SelectMany(u => u.EquipmentNames ?? [])
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToList();
+            if (desiredEquipments.Count < 3)
+            {
+                desiredEquipments.AddRange(finalUnits.SelectMany(u => u.EquipmentNames)
+                    .Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
             var equipmentSet = desiredEquipments.ToHashSet(StringComparer.OrdinalIgnoreCase);
             List<string> owned = state.Equipments.Concat(state.Emblems)
                 .Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
             List<string> directMatches = owned.Where(equipmentSet.Contains).ToList();
             List<string> componentMatches = MatchComponents(owned, desiredEquipments, directMatches);
 
-            // 局面匹配优先，在线统计作为先验。不会因为一个高胜率阵容与当前棋盘毫无关系就排第一。
-            double boardScore = boardCore.Count * 20.0 + boardFlex.Count * 8.0;
-            if (coreHeroes.Count == 0)
-                boardScore = boardFlex.Count * 11.0;
+            WinRateDecisionEngine.EmblemFit emblemFit = WinRateDecisionEngine.ScoreEmblems(state.Emblems, targetTraits);
+            WinRateDecisionEngine.AugmentFit augmentFit = WinRateDecisionEngine.ScoreAugments(
+                comp, state.Augments, targetTraits, desiredEquipments);
 
-            double traitScore = traitCoverage * 28.0;
-            double shopScore = shopCore.Count * 5.0 + shopFlex.Count * 2.0;
-            if (coreHeroes.Count == 0)
-                shopScore = shopFlex.Count * 2.5;
+            double urgency = state.Hp switch
+            {
+                <= 0 => 1.0,
+                <= 35 => 1.35,
+                <= 55 => 1.18,
+                _ => 1.0
+            };
 
-            double itemScore = directMatches.Count * 5.5 + componentMatches.Count * 2.0;
-            double metaScore = CalculateMetaStrength(comp);
-            double strategyScore = CalculateStrategicFit(comp, state);
+            double boardScore = Math.Min(30,
+                (boardCore.Count * 11.0 + boardFlex.Count * 5.0) * urgency);
+            if (stageCore.Count == 0)
+                boardScore = Math.Min(26, boardFlex.Count * 7.5 * urgency);
 
-            double score = Math.Clamp(boardScore + traitScore + shopScore + itemScore + metaScore + strategyScore, 0, 100);
+            double traitScore = Math.Min(18, traitCoverage * 18.0);
+            double shopScore = Math.Min(10,
+                shopCore.Count * 3.5 + shopFlex.Count * 1.3);
+            double itemScore = Math.Min(13,
+                directMatches.Count * 4.0 + componentMatches.Count * 1.6);
+            double metaScore = WinRateDecisionEngine.CalculateMetaStrength(comp);
+            double strategyScore = WinRateDecisionEngine.CalculateStrategicFit(comp, state);
+            double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, stageHeroes, state);
 
-            var matchedHeroes = boardCore.Concat(boardFlex).Concat(shopCore).Concat(shopFlex)
+            double score = Math.Clamp(
+                4 + boardScore + traitScore + shopScore + itemScore +
+                emblemFit.Score + augmentFit.Score + metaScore + strategyScore + freshness - transitionPenalty,
+                0, 100);
+
+            List<string> matchedHeroes = boardCore.Concat(boardFlex).Concat(shopCore).Concat(shopFlex)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var matchedEquipments = directMatches.Concat(componentMatches)
+            List<string> matchedEquipments = directMatches.Concat(componentMatches)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            double confidence = WinRateDecisionEngine.CalculateConfidence(
+                state, board, meta, matchedHeroes.Count, matchedEquipments.Count);
+
+            string warning = JoinWarnings(augmentFit.Warning, freshnessWarning);
+            string risk = WinRateDecisionEngine.ClassifyRisk(score, confidence, strategyScore, warning);
+            string action = WinRateDecisionEngine.BuildNextAction(comp, state, stageIndex);
 
             result.Add(new LineupRecommendation
             {
                 Name = comp.Name,
                 Score = score,
+                Confidence = confidence,
                 StageIndex = stageIndex,
                 MatchedHeroes = matchedHeroes,
                 MatchedEquipments = matchedEquipments,
+                MatchedAugments = augmentFit.Matches,
+                MatchedEmblems = emblemFit.Matches,
+                RiskLevel = risk,
+                NextAction = action,
+                Warning = warning,
                 Source = comp.Source,
                 MetaTier = comp.Tier,
                 MetaWinRate = comp.WinRate,
@@ -113,17 +172,32 @@ public sealed class LineupRecommendationService
                 MetaPickRate = comp.PickRate,
                 MetaAverageRank = comp.AverageRank,
                 MetaTags = comp.Tags.ToList(),
-                Reason = BuildOnlineReason(comp, board, boardCore, boardFlex, matchedTraits,
-                    shopCore, shopFlex, directMatches, componentMatches, traitCoverage, strategyScore)
+                Reason = BuildOnlineReason(
+                    comp, stageIndex, boardCore, boardFlex, matchedTraits, shopCore, shopFlex,
+                    directMatches, componentMatches, augmentFit.Matches, emblemFit.Matches,
+                    traitCoverage, strategyScore, transitionPenalty, warning, action)
             });
         }
 
-        return result
+        List<LineupRecommendation> ordered = result
             .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Confidence)
             .ThenBy(x => x.MetaAverageRank <= 0 ? 99 : x.MetaAverageRank)
             .ThenByDescending(x => x.MetaTopFourRate)
             .Take(Math.Max(1, top))
             .ToList();
+
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            double margin = i == 0
+                ? ordered[i].Score - (ordered.Count > 1 ? ordered[1].Score : 0)
+                : ordered[0].Score - ordered[i].Score;
+            ordered[i].Decision = WinRateDecisionEngine.ClassifyDecision(
+                ordered[i].Score, ordered[i].Confidence, margin, ordered[i].RiskLevel, i);
+            ordered[i].Reason += $"；V4.1决策：{ordered[i].Decision}，风险{ordered[i].RiskLevel}，置信度{ordered[i].Confidence:0}%";
+        }
+
+        return ordered;
     }
 
     private List<LineupRecommendation> RecommendLocalFallback(GameStateSnapshot state, int top)
@@ -140,97 +214,101 @@ public sealed class LineupRecommendationService
             var heroSet = units.Select(u => u.HeroName)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var desiredEquipments = units.SelectMany(u => u.EquipmentNames ?? [])
+            if (heroSet.Count < 3) continue;
+
+            List<string> desiredEquipments = units.SelectMany(u => u.EquipmentNames ?? [])
                 .Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
             var equipmentSet = desiredEquipments.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var matchedShopHeroes = state.ShopHeroes.Where(heroSet.Contains)
+            List<string> matchedShopHeroes = state.ShopHeroes.Where(heroSet.Contains)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var matchedBoardHeroes = board.InferredHeroes.Where(heroSet.Contains)
+            List<string> matchedBoardHeroes = board.InferredHeroes.Where(heroSet.Contains)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             (double traitCoverage, List<string> matchedTraits) = MatchBoardTraits(board.Traits, heroSet);
+            List<string> owned = state.Equipments.Concat(state.Emblems)
+                .Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+            List<string> directMatches = owned.Where(equipmentSet.Contains).ToList();
+            List<string> componentMatches = MatchComponents(owned, desiredEquipments, directMatches);
+            List<string> targetTraits = GetTraits(heroSet);
+            WinRateDecisionEngine.EmblemFit emblemFit = WinRateDecisionEngine.ScoreEmblems(state.Emblems, targetTraits);
 
-            var owned = state.Equipments.Concat(state.Emblems).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
-            var directMatches = owned.Where(equipmentSet.Contains).ToList();
-            var componentMatches = MatchComponents(owned, desiredEquipments, directMatches);
-
-            double score = Math.Min(100,
-                matchedBoardHeroes.Count * 15.0 + traitCoverage * 38.0 + matchedShopHeroes.Count * 7.0 +
-                directMatches.Count * 9.0 + componentMatches.Count * 3.5 + 4.0);
+            double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, heroSet, state);
+            double score = Math.Clamp(
+                8 + matchedBoardHeroes.Count * 11.0 + traitCoverage * 24.0 + matchedShopHeroes.Count * 3.0 +
+                directMatches.Count * 5.0 + componentMatches.Count * 2.0 + emblemFit.Score - transitionPenalty,
+                0, 100);
+            double confidence = Math.Clamp(25 + (board.HasBoardSignal ? 30 : 0) +
+                (state.Equipments.Count > 0 ? 15 : 0) + (state.Level > 0 ? 10 : 0), 20, 80);
+            string action = stageIndex switch
+            {
+                0 => "在线Meta不可用：先用本地前期模板保血，不要提前锁死高费阵容。",
+                1 => "在线Meta不可用：按本地中期骨架补质量，保持经济与血量平衡。",
+                _ => "在线Meta不可用：按本地后期阵容补核心两星，并尽快恢复在线Meta。"
+            };
 
             result.Add(new LineupRecommendation
             {
                 Name = lineUp.LineUpName,
                 Score = score,
+                Confidence = confidence,
                 StageIndex = safeIndex,
                 Source = "本地阵容兜底",
                 MatchedHeroes = matchedBoardHeroes.Concat(matchedShopHeroes)
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 MatchedEquipments = directMatches.Concat(componentMatches)
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                Reason = BuildFallbackReason(board, matchedBoardHeroes, matchedTraits, matchedShopHeroes,
-                    directMatches, componentMatches, safeIndex, traitCoverage)
+                MatchedEmblems = emblemFit.Matches,
+                RiskLevel = "中",
+                NextAction = action,
+                Warning = "当前未使用在线Meta，建议在安全时手动刷新Meta阵容。",
+                Reason = BuildFallbackReason(matchedBoardHeroes, matchedTraits, matchedShopHeroes,
+                    directMatches, componentMatches, emblemFit.Matches, safeIndex, traitCoverage, action)
             });
         }
 
-        return result.OrderByDescending(x => x.Score).ThenBy(x => x.Name).Take(Math.Max(1, top)).ToList();
-    }
-
-    private double CalculateMetaStrength(OnlineMetaComp comp)
-    {
-        double tier = comp.Tier switch
+        List<LineupRecommendation> ordered = result
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Confidence)
+            .Take(Math.Max(1, top)).ToList();
+        for (int i = 0; i < ordered.Count; i++)
         {
-            "S" => 15,
-            "A" => 11,
-            "B" => 7,
-            "C" => 3,
-            _ => 0
-        };
-        double avg = comp.AverageRank > 0 ? Math.Clamp((4.6 - comp.AverageRank) * 4.0, -4, 8) : 0;
-        double win = Math.Clamp((comp.WinRate - 8.0) * 0.45, 0, 8);
-        double top4 = Math.Clamp((comp.TopFourRate - 48.0) * 0.25, 0, 6);
-        // 登场率仅作为样本可靠性微加分，不惩罚用户偏好的冷门强阵。
-        double reliability = Math.Clamp(comp.PickRate * 0.40, 0, 4);
-        return tier + avg + win + top4 + reliability;
-    }
-
-    private static double CalculateStrategicFit(OnlineMetaComp comp, GameStateSnapshot state)
-    {
-        string tags = string.Join(" ", comp.Tags).ToLowerInvariant();
-        double score = 0;
-
-        if (ContainsAny(tags, "5级d", "5级 d", "level 5", "5 reroll"))
-            score += state.Level <= 5 ? 8 : state.Level == 6 ? 2 : -4;
-        if (ContainsAny(tags, "6级d", "6级 d", "level 6", "6 reroll"))
-            score += state.Level == 6 ? 8 : state.Level <= 5 ? 4 : state.Level == 7 ? 2 : -3;
-        if (ContainsAny(tags, "7级d", "7级 d", "level 7", "7 reroll"))
-            score += state.Level == 7 ? 8 : state.Level == 6 ? 4 : state.Level <= 5 ? 1 : -2;
-
-        bool fast8 = ContainsAny(tags, "速8", "fast 8", "8级");
-        bool fast9 = ContainsAny(tags, "速9", "fast 9", "9级");
-        if (fast8)
-        {
-            if (state.Level >= 7 && state.Gold >= 25) score += 6;
-            if (state.Hp is > 0 and < 55 && state.Gold < 20) score -= 7;
+            ordered[i].Decision = i == 0 && ordered[i].Score >= 58 ? "主推" : i <= 1 ? "观察" : "备选";
+            ordered[i].Reason += $"；V4.1决策：{ordered[i].Decision}，置信度{ordered[i].Confidence:0}%";
         }
-        if (fast9)
-        {
-            if (state.Level >= 8 && state.Gold >= 30 && state.Hp >= 55) score += 8;
-            if (state.Hp is > 0 and < 60 || state.Gold < 15) score -= 9;
-        }
-
-        return Math.Clamp(score, -12, 10);
+        return ordered;
     }
 
-    private static bool ContainsAny(string text, params string[] values)
-        => values.Any(text.Contains);
+    private Dictionary<string, LineUp> BuildLocalLineupMap()
+    {
+        return _lineUpService.GetLineUps()
+            .Where(x => !string.IsNullOrWhiteSpace(x.LineUpName))
+            .GroupBy(x => NormalizeName(x.LineUpName), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static List<LineUpUnit> GetStageUnits(Dictionary<string, LineUp> map, string compName, int stageIndex)
+    {
+        if (!map.TryGetValue(NormalizeName(compName), out LineUp? lineUp) ||
+            lineUp.SubLineUps == null || lineUp.SubLineUps.Length == 0)
+            return [];
+        int safe = Math.Clamp(stageIndex, 0, lineUp.SubLineUps.Length - 1);
+        return lineUp.SubLineUps[safe].LineUpUnits ?? [];
+    }
+
+    private List<string> GetTraits(IEnumerable<string> heroNames)
+    {
+        return heroNames
+            .Where(_heroTraits.ContainsKey)
+            .SelectMany(h => _heroTraits[h])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 
     private (double Coverage, List<string> MatchedTraits) MatchBoardTraits(
         Dictionary<string, int> observed,
         IEnumerable<string> heroNames)
     {
         if (observed.Count == 0 || _heroTraits.Count == 0) return (0, []);
-
         var lineupCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (string hero in heroNames.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -263,7 +341,8 @@ public sealed class LineupRecommendationService
         var matches = new List<string>();
 
         foreach (var pair in directCounts)
-            if (available.TryGetValue(pair.Key, out int count)) available[pair.Key] = Math.Max(0, count - pair.Value);
+            if (available.TryGetValue(pair.Key, out int count))
+                available[pair.Key] = Math.Max(0, count - pair.Value);
 
         foreach (string target in desired)
         {
@@ -342,7 +421,7 @@ public sealed class LineupRecommendationService
 
     private static string BuildOnlineReason(
         OnlineMetaComp comp,
-        LiveBoardSnapshot board,
+        int stageIndex,
         List<string> boardCore,
         List<string> boardFlex,
         List<string> matchedTraits,
@@ -350,38 +429,49 @@ public sealed class LineupRecommendationService
         List<string> shopFlex,
         List<string> directEquipments,
         List<string> components,
+        List<string> augmentMatches,
+        List<string> emblemMatches,
         double traitCoverage,
-        double strategyScore)
+        double strategyScore,
+        double transitionPenalty,
+        string warning,
+        string action)
     {
+        string stage = stageIndex switch { 0 => "前期", 1 => "中期", _ => "后期" };
         var parts = new List<string>
         {
             $"{comp.Source} {comp.Tier}级",
-            $"均次{comp.AverageRank:0.00}/前四{comp.TopFourRate:0.0}%/登顶{comp.WinRate:0.0}%/登场{comp.PickRate:0.00}%"
+            $"均次{comp.AverageRank:0.00}/前四{comp.TopFourRate:0.0}%/登顶{comp.WinRate:0.0}%/登场{comp.PickRate:0.00}%",
+            $"按本地{stage}模板评估"
         };
-        if (boardCore.Count > 0) parts.Add($"上场核心命中：{string.Join("、", boardCore)}");
-        if (boardFlex.Count > 0) parts.Add($"上场挂件命中：{string.Join("、", boardFlex)}");
+        if (boardCore.Count > 0) parts.Add($"上场核心：{string.Join("、", boardCore)}");
+        if (boardFlex.Count > 0) parts.Add($"上场过渡：{string.Join("、", boardFlex)}");
         if (matchedTraits.Count > 0) parts.Add($"羁绊覆盖{traitCoverage:P0}：{string.Join("、", matchedTraits)}");
         if (shopCore.Count > 0) parts.Add($"商店核心：{string.Join("、", shopCore)}");
         if (shopFlex.Count > 0) parts.Add($"商店可留：{string.Join("、", shopFlex)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
-        if (comp.Tags.Count > 0) parts.Add($"标签：{string.Join("/", comp.Tags.Take(4))}");
-        if (strategyScore >= 4) parts.Add("当前等级/经济契合运营节奏");
-        if (strategyScore <= -4) parts.Add("当前血量/经济与该运营节奏冲突");
-        if (!board.HasBoardSignal && shopCore.Count == 0 && shopFlex.Count == 0)
-            parts.Add("当前棋盘信号不足，主要按版本强度作为候选");
+        if (augmentMatches.Count > 0) parts.Add($"强化适配：{string.Join("、", augmentMatches)}");
+        if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
+        if (comp.Tags.Count > 0) parts.Add($"运营标签：{string.Join("/", comp.Tags.Take(4))}");
+        if (strategyScore >= 5) parts.Add("当前等级/经济/血量契合该运营节奏");
+        if (strategyScore <= -5) parts.Add("当前局面与该运营节奏冲突");
+        if (transitionPenalty >= 5) parts.Add($"转阵成本偏高(-{transitionPenalty:0.0})");
+        if (!string.IsNullOrWhiteSpace(warning)) parts.Add($"警告：{warning}");
+        parts.Add($"下一步：{action}");
         return string.Join("；", parts);
     }
 
     private static string BuildFallbackReason(
-        LiveBoardSnapshot board,
         List<string> boardHeroes,
         List<string> matchedTraits,
         List<string> shopHeroes,
         List<string> directEquipments,
         List<string> components,
+        List<string> emblemMatches,
         int stageIndex,
-        double traitCoverage)
+        double traitCoverage,
+        string action)
     {
         string stage = stageIndex switch { 0 => "前期", 1 => "中期", _ => "后期" };
         var parts = new List<string> { $"在线Meta不可用，按本地{stage}阵容兜底" };
@@ -390,6 +480,19 @@ public sealed class LineupRecommendationService
         if (shopHeroes.Count > 0) parts.Add($"商店命中：{string.Join("、", shopHeroes)}");
         if (directEquipments.Count > 0) parts.Add($"装备命中：{string.Join("、", directEquipments)}");
         if (components.Count > 0) parts.Add($"散件可合：{string.Join("、", components)}");
+        if (emblemMatches.Count > 0) parts.Add($"纹章适配：{string.Join("、", emblemMatches)}");
+        parts.Add($"下一步：{action}");
         return string.Join("；", parts);
+    }
+
+    private static string JoinWarnings(params string[] values)
+        => string.Join("；", values.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct());
+
+    private static string NormalizeName(string name)
+    {
+        return new string((name ?? "")
+            .Where(c => char.IsLetterOrDigit(c) || c >= 0x4e00)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
     }
 }
