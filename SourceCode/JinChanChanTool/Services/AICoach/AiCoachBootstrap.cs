@@ -12,6 +12,7 @@ public static class AiCoachBootstrap
     private static OnlineMetaService? _onlineMetaService;
     private static bool _attaching;
     private static bool _exitHooked;
+    private static string _lastObservedStage = "";
 
     [ModuleInitializer]
     public static void Initialize()
@@ -79,6 +80,7 @@ public static class AiCoachBootstrap
                     _hudWatcher = null;
                     _onlineMetaService?.Dispose();
                     _onlineMetaService = null;
+                    _lastObservedStage = "";
                 };
             }
 
@@ -152,12 +154,24 @@ public static class AiCoachBootstrap
     {
         AiCoachForm? form = _coachForm;
         if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
+
+        bool newGame = IsConfirmedNewGameTransition(_lastObservedStage, snapshot.Stage);
+        if (!string.IsNullOrWhiteSpace(snapshot.Stage))
+            _lastObservedStage = snapshot.Stage!;
+
+        if (newGame)
+            LiveBoardState.Clear();
+
         try
         {
             form.BeginInvoke(new Action(() =>
             {
                 if (form.IsDisposed) return;
                 var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+
+                if (newGame)
+                    ClearPerGameUiState(form, flags);
+
                 if (!string.IsNullOrWhiteSpace(snapshot.Stage) &&
                     typeof(AiCoachForm).GetField("_stageBox", flags)?.GetValue(form) is TextBox stageBox)
                     stageBox.Text = snapshot.Stage;
@@ -170,10 +184,51 @@ public static class AiCoachBootstrap
                 if (snapshot.Hp.HasValue &&
                     typeof(AiCoachForm).GetField("_hpBox", flags)?.GetValue(form) is NumericUpDown hpBox)
                     hpBox.Value = Math.Clamp(snapshot.Hp.Value, (int)hpBox.Minimum, (int)hpBox.Maximum);
+
+                if (newGame && typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
+                    statusLabel.Text = "检测到新对局：已清空上一局装备/强化/纹章/持有棋子/同行信息，重新从前期状态评估。";
+
                 UpdateWindowTitle(form);
             }));
         }
         catch { }
+    }
+
+    private static void ClearPerGameUiState(AiCoachForm form, BindingFlags flags)
+    {
+        string[] textFields = ["_equipmentBox", "_augmentBox", "_emblemBox", "_heldHeroesBox", "_contestedHeroesBox", "_stageBox"];
+        foreach (string name in textFields)
+        {
+            if (typeof(AiCoachForm).GetField(name, flags)?.GetValue(form) is TextBox box)
+                box.Clear();
+        }
+
+        string[] numericFields = ["_levelBox", "_goldBox", "_hpBox"];
+        foreach (string name in numericFields)
+        {
+            if (typeof(AiCoachForm).GetField(name, flags)?.GetValue(form) is NumericUpDown box)
+                box.Value = Math.Clamp(0, (int)box.Minimum, (int)box.Maximum);
+        }
+
+        if (typeof(AiCoachForm).GetField("_recommendationList", flags)?.GetValue(form) is ListView list)
+            list.Items.Clear();
+        if (typeof(AiCoachForm).GetField("_aiOutput", flags)?.GetValue(form) is RichTextBox output)
+            output.Clear();
+    }
+
+    private static bool IsConfirmedNewGameTransition(string previous, string? current)
+    {
+        int previousMajor = ParseStageMajor(previous);
+        int currentMajor = ParseStageMajor(current);
+        return previousMajor >= 3 && currentMajor == 2;
+    }
+
+    private static int ParseStageMajor(string? stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage)) return 0;
+        int dash = stage.IndexOf('-');
+        string major = dash > 0 ? stage[..dash] : stage;
+        return int.TryParse(major.Trim(), out int value) ? value : 0;
     }
 
     private static void OnBoardStateChanged(LiveBoardSnapshot snapshot)
