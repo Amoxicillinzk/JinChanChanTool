@@ -104,7 +104,7 @@ public static class AiCoachBootstrap
 
         try
         {
-            form.BeginInvoke(() =>
+            form.BeginInvoke(new Action(() =>
             {
                 if (form.IsDisposed) return;
 
@@ -142,7 +142,7 @@ public static class AiCoachBootstrap
                         statusLabel.Text = $"上场棋盘识别：{snapshot.Error}";
                     }
                 }
-            });
+            }));
         }
         catch
         {
