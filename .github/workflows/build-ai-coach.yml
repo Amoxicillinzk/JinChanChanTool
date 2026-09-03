@@ -1,0 +1,50 @@
+name: Build AI Coach
+
+on:
+  push:
+    branches:
+      - feat/ai-coach-v1
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore SourceCode/JinChanChanTool/JinChanChanTool.csproj
+
+      - name: Publish win-x64
+        run: >-
+          dotnet publish SourceCode/JinChanChanTool/JinChanChanTool.csproj
+          -c Release
+          -r win-x64
+          --self-contained false
+          -o publish
+
+      - name: Ensure S18 lineup library is packaged
+        shell: pwsh
+        run: |
+          $target = "publish/Resources/HeroDatas/S18"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          if (Test-Path "SourceCode/JinChanChanTool/Resources/HeroDatas/S18/LineUps.json") {
+            Copy-Item "SourceCode/JinChanChanTool/Resources/HeroDatas/S18/LineUps.json" "$target/LineUps.json" -Force
+          }
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath JinChanChanTool-AICoach-V1-win-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JinChanChanTool-AICoach-V1-win-x64
+          path: JinChanChanTool-AICoach-V1-win-x64.zip
+          retention-days: 14
