@@ -61,7 +61,8 @@ public sealed class LineupRecommendationService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             List<LineUpUnit> stageUnits = GetStageUnits(localByName, comp.Name, stageIndex);
-            if (stageUnits.Count < 3)
+            bool stageTemplateFallback = stageUnits.Count < 3;
+            if (stageTemplateFallback)
             {
                 stageUnits = finalUnits.Select(u => new LineUpUnit
                 {
@@ -162,13 +163,17 @@ public sealed class LineupRecommendationService
                 : reroll
                     ? $"追三核心被同行争抢：{string.Join("、", contestedCore)}；数量不领先时应准备转阵。"
                     : $"核心牌被同行争抢：{string.Join("、", contestedCore)}；预计搜牌成本上升。";
-            string warning = JoinWarnings(augmentFit.Warning, contestWarning, freshnessWarning);
+            string templateWarning = stageTemplateFallback
+                ? "当前阵容缺少对应阶段模板，暂用Meta终局单位估算；不要仅凭该结果锁阵。"
+                : "";
+            string reliabilityWarning = WinRateDecisionEngine.MetaReliabilityWarning(comp);
+            string warning = JoinWarnings(augmentFit.Warning, contestWarning, templateWarning, reliabilityWarning, freshnessWarning);
 
-            double score = Math.Clamp(
+            double rawScore =
                 4 + boardScore + traitScore + shopScore + heldScore + itemScore +
                 emblemFit.Score + augmentFit.Score + metaScore + strategyScore + freshness + continuityBonus -
-                transitionPenalty - contestPenalty,
-                0, 100);
+                transitionPenalty - contestPenalty;
+            double score = V41ScoreCalibration.NormalizeFitScore(rawScore);
 
             List<string> matchedHeroes = boardCore.Concat(boardFlex).Concat(shopCore).Concat(shopFlex)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -178,8 +183,11 @@ public sealed class LineupRecommendationService
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             double confidence = WinRateDecisionEngine.CalculateConfidence(
                 state, board, meta, matchedHeroes.Count + matchedHeld.Count, matchedEquipments.Count);
-            if (state.HeldHeroes.Count > 0) confidence = Math.Min(100, confidence + 4);
-            if (state.ContestedHeroes.Count > 0) confidence = Math.Min(100, confidence + 4);
+            confidence += V41ScoreCalibration.MetaConfidenceAdjustment(comp);
+            if (stageTemplateFallback) confidence -= 10;
+            if (state.HeldHeroes.Count > 0) confidence += 4;
+            if (state.ContestedHeroes.Count > 0) confidence += 4;
+            confidence = Math.Clamp(confidence, 15, 100);
 
             string risk = WinRateDecisionEngine.ClassifyRisk(score, confidence, strategyScore, warning);
             string action = WinRateDecisionEngine.BuildNextAction(comp, state, stageIndex);
@@ -300,11 +308,11 @@ public sealed class LineupRecommendationService
                  emblemFit.Matches.Count > 0);
             double continuityBonus = stageIndex >= 1 && hasRouteEvidence ? 4 : 0;
             double contestPenalty = Math.Min(12, contestedHeroes.Count * 4.0);
-            double score = Math.Clamp(
+            double rawScore =
                 8 + matchedBoardHeroes.Count * 11.0 + traitCoverage * 24.0 + matchedShopHeroes.Count * 3.0 +
                 matchedHeldHeroes.Count * 3.5 + directMatches.Count * 5.0 + componentMatches.Count * 2.0 +
-                emblemFit.Score + continuityBonus - transitionPenalty - contestPenalty,
-                0, 100);
+                emblemFit.Score + continuityBonus - transitionPenalty - contestPenalty;
+            double score = V41ScoreCalibration.NormalizeFitScore(rawScore);
             double confidence = Math.Clamp(25 + (board.HasBoardSignal ? 30 : 0) +
                 (state.Equipments.Count > 0 ? 15 : 0) + (state.Level > 0 ? 10 : 0) +
                 (state.HeldHeroes.Count > 0 ? 5 : 0) + (state.ContestedHeroes.Count > 0 ? 5 : 0), 20, 85);
@@ -490,25 +498,7 @@ public sealed class LineupRecommendationService
     }
 
     private static int ResolveStageIndex(GameStateSnapshot state)
-    {
-        if (state.Level > 0)
-        {
-            if (state.Level <= 5) return 0;
-            if (state.Level <= 7) return 1;
-            return 2;
-        }
-
-        int liveLevel = LiveBoardState.GetSnapshot().InferredLevel;
-        if (liveLevel > 0) return liveLevel <= 5 ? 0 : liveLevel <= 7 ? 1 : 2;
-
-        string stage = state.Stage?.Trim() ?? "";
-        if (stage.StartsWith("1-") || stage.StartsWith("2-")) return 0;
-        if (stage.StartsWith("3-")) return 1;
-        if (stage.StartsWith("4-") || stage.StartsWith("5-") || stage.StartsWith("6-") || stage.StartsWith("7-")) return 2;
-
-        // V4.1：等级和阶段都未知时，宁可采用前期保守模板，也不能把启动瞬间误判成后期成型。
-        return 0;
-    }
+        => V41ScoreCalibration.ResolveStageIndex(state);
 
     private static bool IsRerollComp(OnlineMetaComp comp)
     {
