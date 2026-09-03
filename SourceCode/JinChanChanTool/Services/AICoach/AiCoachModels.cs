@@ -2,15 +2,19 @@ namespace JinChanChanTool.Services.AICoach;
 
 public sealed class AiCoachSettings
 {
-    public int SettingsVersion { get; set; } = 4;
+    public int SettingsVersion { get; set; } = 5;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "gpt-5-mini";
     public bool AutoRefresh { get; set; } = true;
     public int RefreshIntervalMs { get; set; } = 1000;
 
+    // V3：实时在线 Meta 为主，本地 LineUps.json 仅在断网/在线数据不可用时兜底。
+    public bool UseOnlineMeta { get; set; } = true;
+    public int OnlineMetaCacheMinutes { get; set; } = 30;
+    public bool IncludeLowPickStrongComps { get; set; } = true;
+
     // V2.1：旧的 2D 装备图标模板会把左侧羁绊栏误判为装备，默认关闭。
-    // 后续改成“悬停装备 -> OCR Tooltip 名称”后再重新启用。
     public bool AutoDetectEquipments { get; set; } = false;
     public int InventoryReferenceWidth { get; set; } = 2048;
     public int InventoryReferenceHeight { get; set; } = 1152;
@@ -44,32 +48,22 @@ public sealed class AiCoachSettings
     public int HudRefreshIntervalMs { get; set; } = 1000;
     public int HudReferenceWidth { get; set; } = 2048;
     public int HudReferenceHeight { get; set; } = 1152;
-
-    // 顶部中央阶段，例如 2-1 / 3-2。
     public int HudStageX { get; set; } = 775;
     public int HudStageY { get; set; } = 0;
     public int HudStageWidth { get; set; } = 135;
     public int HudStageHeight { get; set; } = 58;
-
-    // 左下等级，例如“3级”。
     public int HudLevelX { get; set; } = 340;
     public int HudLevelY { get; set; } = 915;
     public int HudLevelWidth { get; set; } = 155;
     public int HudLevelHeight { get; set; } = 70;
-
-    // 底部中央金币，例如 6 / 50。
     public int HudGoldX { get; set; } = 1035;
     public int HudGoldY { get; set; } = 915;
     public int HudGoldWidth { get; set; } = 135;
     public int HudGoldHeight { get; set; } = 70;
-
-    // 右侧玩家列表。先在此区域寻找当前玩家的大号金色头像框。
     public int HudSidebarX { get; set; } = 1770;
     public int HudSidebarY { get; set; } = 145;
     public int HudSidebarWidth { get; set; } = 278;
     public int HudSidebarHeight { get; set; } = 760;
-
-    // 相对于玩家列表左边/当前玩家中心Y的血量 OCR 小框。
     public int HudSelfHpOffsetX { get; set; } = 78;
     public int HudSelfHpOffsetY { get; set; } = 32;
     public int HudSelfHpWidth { get; set; } = 105;
@@ -96,4 +90,13 @@ public sealed class LineupRecommendation
     public List<string> MatchedHeroes { get; set; } = [];
     public List<string> MatchedEquipments { get; set; } = [];
     public string Reason { get; set; } = "";
+
+    // V3 在线 Meta 信息。UI 和 AI Prompt 都可直接使用。
+    public string Source { get; set; } = "本地";
+    public string MetaTier { get; set; } = "";
+    public double MetaWinRate { get; set; }
+    public double MetaTopFourRate { get; set; }
+    public double MetaPickRate { get; set; }
+    public double MetaAverageRank { get; set; }
+    public List<string> MetaTags { get; set; } = [];
 }
