@@ -80,11 +80,15 @@ public sealed class GameStateSnapshot
     public List<string> Augments { get; set; } = [];
     public List<string> Emblems { get; set; } = [];
 
-    // 用户可选输入：备战席/已持有的关键牌。它们比单轮商店更有方向价值，但弱于已经上场的棋盘。
+    // 兼容旧逻辑的名称集合；V4.1 新逻辑优先使用 Counts。
     public List<string> HeldHeroes { get; set; } = [];
-
-    // 用户可选输入：明显被同行争抢的核心牌。reroll阵容会对此给予更强惩罚。
     public List<string> ContestedHeroes { get; set; } = [];
+
+    // 精确持有数量：例如 易×7。未填写数量时默认1。
+    public Dictionary<string, int> HeldHeroCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // 同行可见/估计持有数量：例如 维迦×6。数量越高，追三星阵容越应该降权。
+    public Dictionary<string, int> ContestedHeroCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public string Stage { get; set; } = "";
     public int Level { get; set; }
@@ -104,6 +108,10 @@ public sealed class LineupRecommendation
     public List<string> MatchedEmblems { get; set; } = [];
     public List<string> MatchedHeldHeroes { get; set; } = [];
     public List<string> ContestedCoreHeroes { get; set; } = [];
+
+    // 用于理由/AI解释的数量级指标。
+    public int MatchedHeldCopies { get; set; }
+    public int ContestedCoreCopies { get; set; }
 
     public string Decision { get; set; } = "观察";
     public string RiskLevel { get; set; } = "中";
