@@ -62,7 +62,7 @@ public static class WinRateDecisionEngine
         string tags = string.Join(" ", comp.Tags).ToLowerInvariant();
         double score = 0;
         bool levelKnown = state.Level > 0;
-        bool hpKnown = state.Hp > 0;
+        bool hpKnown = IsHpKnown(state);
         bool goldKnown = IsGoldKnown(state);
         int stageMajor = ResolveStageMajor(state);
         bool reroll5 = ContainsAny(tags, "5级d", "5级 d", "level 5", "5 reroll");
@@ -123,7 +123,7 @@ public static class WinRateDecisionEngine
         if (augments.Count == 0)
         {
             if (LooksLikeUnrivaledComp(comp.Name))
-                return new AugmentFit(-18, [], "专属强化未确认：该阵容疑似依赖“Unrivaled/宿敌”；在确认拿到前不应锁定。 ");
+                return new AugmentFit(-18, [], "专属强化未确认：该阵容疑似依赖“Unrivaled/宿敌”；在确认拿到前不应锁定。");
             return new AugmentFit(0, [], "");
         }
 
@@ -221,13 +221,14 @@ public static class WinRateDecisionEngine
             .Count(h => !targetHeroes.Contains(h, StringComparer.OrdinalIgnoreCase));
         if (offPath == 0) return 0;
 
-        double each = state.Hp switch
-        {
-            <= 0 => 1.5,
-            <= 35 => 4.0,
-            <= 55 => 3.0,
-            _ => 1.8
-        };
+        bool hpKnown = IsHpKnown(state);
+        double each = !hpKnown
+            ? 1.5
+            : state.Hp <= 35
+                ? 4.0
+                : state.Hp <= 55
+                    ? 3.0
+                    : 1.8;
         if (state.Level >= 7) each += 0.7;
         return Math.Min(16, offPath * each);
     }
@@ -243,7 +244,7 @@ public static class WinRateDecisionEngine
         if (board.InferredHeroes.Count > 0) value += 22;
         if (board.Traits.Count > 0) value += 18;
         if (state.Level > 0 || !string.IsNullOrWhiteSpace(state.Stage)) value += 10;
-        if (state.Hp > 0) value += 6;
+        if (IsHpKnown(state)) value += 6;
         if (IsGoldKnown(state)) value += 5;
         if (state.Equipments.Count + state.Emblems.Count > 0) value += 9;
         if (state.ShopHeroes.Length > 0) value += 3;
@@ -262,9 +263,10 @@ public static class WinRateDecisionEngine
         bool fast8 = ContainsAny(tags, "速8", "fast 8", "8级");
         bool fast9 = ContainsAny(tags, "速9", "fast 9", "9级");
         bool goldKnown = IsGoldKnown(state);
+        bool hpKnown = IsHpKnown(state);
         int stageMajor = ResolveStageMajor(state);
 
-        if (state.Hp is > 0 and <= 30)
+        if (hpKnown && state.Hp <= 30)
         {
             if (!goldKnown) return "危险血线：金币未知，先上最强战力并合通用成装；不要贪人口或长期经济。";
             if (state.Gold >= 20) return "危险血线：本轮优先花钱提升即时战力，D到能稳住再停，不再贪长期经济。";
@@ -281,7 +283,7 @@ public static class WinRateDecisionEngine
             {
                 if (!goldKnown) return "5级D牌窗口已到，但金币未知：先确认经济，再决定慢D还是止血搜牌。";
                 if (stageMajor >= 5) return "5级D牌已严重超时：不要再守50利息；本轮完成核心质量，仍差很多就停止追三并准备提人口。";
-                if (stageMajor >= 4 || state.Hp is > 0 and < 55)
+                if (stageMajor >= 4 || hpKnown && state.Hp < 55)
                     return "5级D牌进入时间压力：优先D到20~30完成关键两星/接近三星，再根据血量恢复经济；不要机械卡50。";
                 return state.Gold >= 50 ? "5级卡50利息慢D核心三星；血量跌破55或进入4阶段后停止机械守50。" : "5级先攒经济，除非掉血严重否则不要把钱D空。";
             }
@@ -294,7 +296,7 @@ public static class WinRateDecisionEngine
             {
                 if (!goldKnown) return "6级主D窗口已到，但金币未知：先确认经济；不要因为未知值直接把钱搜空。";
                 if (stageMajor >= 5) return "6级D牌已经超时：本轮优先把主C/主坦质量做出来，不能继续卡50慢D；质量仍不足就转提人口。";
-                if (stageMajor >= 4 || state.Hp is > 0 and < 55)
+                if (stageMajor >= 4 || hpKnown && state.Hp < 55)
                     return "6级主D进入压力窗口：可D到20~30稳住主C主坦，再恢复经济；不要为了利息连续掉大血。";
                 return state.Gold >= 50 ? "6级卡利息慢D；进入4阶段或血量跌破55后改为主动提质量。" : "6级先补经济，下一轮集中D牌。";
             }
@@ -307,15 +309,15 @@ public static class WinRateDecisionEngine
             {
                 if (!goldKnown) return "当前处于7级D牌窗口，但金币未知：先确认经济，再决定慢D或止血大搜。";
                 if (stageMajor >= 6) return "7级D牌已严重拖后：本轮把剩余经济转成战力；核心仍差很多就放弃无底线追三。";
-                if (stageMajor >= 5 || state.Hp is > 0 and < 50)
+                if (stageMajor >= 5 || hpKnown && state.Hp < 50)
                     return "7级D牌进入后期压力：优先D到20左右完成两星/关键三星进度，再判断是否继续；不要卡50等死。";
                 return state.Gold >= 40 ? "当前就是7级D牌窗口：卡30~50利息追核心；血量跌破50后改为主动止血。" : "保持20~30金币底线，小幅D牌补两星后继续恢复经济。";
             }
         }
         if (fast9)
         {
-            if (state.Hp <= 0) return "血量未知：不要机械速9；先确认血量并判断8级棋盘能否稳定作战。";
-            if (!goldKnown) return "金币未知：暂不执行速9；先确认经济，8级只做必要补强并维持血量。";
+            if (!hpKnown) return "血量未知或HUD血量已过期：不要机械速9；先确认血量并判断8级棋盘能否稳定作战。";
+            if (!goldKnown) return "金币未知或HUD金币已过期：暂不执行速9；先确认经济，8级只做必要补强并维持血量。";
             if (state.Level >= 9) return "已到9级：把经济转成高费两星与完整前排，不再存无效金币。";
             if (stageMajor >= 6 && state.Level < 9) return "已进入6阶段仍未9级：先确保8级棋盘质量；只有能稳定存活且经济够用才继续冲9。";
             if (state.Hp >= 65 && state.Gold >= 45) return "保持连胜/血量，优先攒钱拉9；8级只小D止血。";
@@ -324,8 +326,8 @@ public static class WinRateDecisionEngine
         }
         if (fast8)
         {
-            if (state.Hp <= 0) return "血量未知：先确认血量；当前保持经济但不要为了拉8连续牺牲战力。";
-            if (!goldKnown) return "金币未知：先确认经济；当前只买能直接增强棋盘的牌，不机械拉8或大D。";
+            if (!hpKnown) return "血量未知或HUD血量已过期：先确认血量；当前保持经济但不要为了拉8连续牺牲战力。";
+            if (!goldKnown) return "金币未知或HUD金币已过期：先确认经济；当前只买能直接增强棋盘的牌，不机械拉8或大D。";
             if (stageMajor >= 5 && state.Level < 8) return "已进入5阶段仍未8级：停止标准速8脚本，先把当前经济转成即时战力，再决定是否还能拉8。";
             if (state.Level < 7) return "保持经济，以拉7/8为主，当前只买能直接增强棋盘的牌。";
             if (state.Level == 7 && state.Hp < 50) return "7级先D一轮止血，形成两星前排/核心后再拉8。";
@@ -373,16 +375,35 @@ public static class WinRateDecisionEngine
 
     private static bool IsGoldKnown(GameStateSnapshot state)
     {
-        if (state.Gold > 0) return true;
         try
         {
-            return LiveHudState.GetSnapshot().Gold.HasValue;
+            LiveHudSnapshot hud = LiveHudState.GetSnapshot();
+            if (hud.Gold.HasValue && state.Gold == hud.Gold.Value)
+                return IsFresh(hud.GoldAt, TimeSpan.FromSeconds(8));
         }
-        catch
-        {
-            return false;
-        }
+        catch { }
+
+        // 与HUD旧值不同的正数视为用户手工覆盖；0只有实时HUD明确识别到时才算已知。
+        return state.Gold > 0;
     }
+
+    private static bool IsHpKnown(GameStateSnapshot state)
+    {
+        if (state.Hp <= 0) return false;
+        try
+        {
+            LiveHudSnapshot hud = LiveHudState.GetSnapshot();
+            if (hud.Hp.HasValue && state.Hp == hud.Hp.Value)
+                return IsFresh(hud.HpAt, TimeSpan.FromSeconds(10));
+        }
+        catch { }
+
+        // 与HUD旧值不同的正数视为用户手工覆盖。
+        return true;
+    }
+
+    private static bool IsFresh(DateTime timestamp, TimeSpan maxAge)
+        => timestamp != DateTime.MinValue && DateTime.Now - timestamp <= maxAge;
 
     private static int ResolveStageMajor(GameStateSnapshot state)
     {
