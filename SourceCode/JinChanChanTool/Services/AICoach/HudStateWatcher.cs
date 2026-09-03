@@ -7,8 +7,8 @@ using JinChanChanTool.Services;
 namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
-/// V2.2：实时读取游戏 HUD：阶段、等级、金币、血量。
-/// 阶段/等级/金币为固定区域；血量先在右侧玩家列表定位当前玩家的大号金色头像框，再 OCR 左侧数字。
+/// 实时读取游戏 HUD：阶段、等级、金币、血量。
+/// V4.1 金币会做多裁剪 OCR + 短暂截断保护，解决 12 被识别成 1 这类多位数丢字问题。
 /// </summary>
 public sealed class HudStateWatcher : IDisposable
 {
@@ -18,6 +18,8 @@ public sealed class HudStateWatcher : IDisposable
     private readonly SemaphoreSlim _scanGate = new(1, 1);
     private System.Threading.Timer? _timer;
     private string _lastLog = "";
+    private int? _lastGold;
+    private int _goldTruncationStreak;
 
     public HudStateWatcher(Control gameAnchor, CardService cardService)
     {
@@ -37,7 +39,8 @@ public sealed class HudStateWatcher : IDisposable
     public void Start()
     {
         if (!_settings.AutoDetectHud || _timer != null) return;
-        _timer = new System.Threading.Timer(_ => _ = ScanSafeAsync(), null, 450, Math.Clamp(_settings.HudRefreshIntervalMs, 700, 3000));
+        _timer = new System.Threading.Timer(_ => _ = ScanSafeAsync(), null, 450,
+            Math.Clamp(_settings.HudRefreshIntervalMs, 700, 3000));
     }
 
     private async Task ScanSafeAsync()
@@ -71,7 +74,8 @@ public sealed class HudStateWatcher : IDisposable
         using var screen = new Bitmap(_gameScreenBounds.Width, _gameScreenBounds.Height, PixelFormat.Format24bppRgb);
         using (Graphics g = Graphics.FromImage(screen))
         {
-            g.CopyFromScreen(_gameScreenBounds.Left, _gameScreenBounds.Top, 0, 0, _gameScreenBounds.Size, CopyPixelOperation.SourceCopy);
+            g.CopyFromScreen(_gameScreenBounds.Left, _gameScreenBounds.Top, 0, 0,
+                _gameScreenBounds.Size, CopyPixelOperation.SourceCopy);
         }
 
         float sx = screen.Width / (float)Math.Max(1, _settings.HudReferenceWidth);
@@ -101,20 +105,64 @@ public sealed class HudStateWatcher : IDisposable
         string text = Compact(await RecognizeCropAsync(screen, rect, 3));
         Match m = Regex.Match(text, @"(?<n>1[0-5]|[1-9])级");
         if (!m.Success) m = Regex.Match(text, @"(?<n>1[0-5]|[1-9])");
-        return m.Success && int.TryParse(m.Groups["n"].Value, out int value) && value is >= 1 and <= 15 ? value : null;
+        return m.Success && int.TryParse(m.Groups["n"].Value, out int value) && value is >= 1 and <= 15
+            ? value
+            : null;
     }
 
     private async Task<int?> RecognizeGoldAsync(Bitmap screen, float sx, float sy)
     {
-        Rectangle rect = ScaleRect(_settings.HudGoldX, _settings.HudGoldY,
+        Rectangle baseRect = ScaleRect(_settings.HudGoldX, _settings.HudGoldY,
             _settings.HudGoldWidth, _settings.HudGoldHeight, sx, sy, screen.Size);
-        string text = Compact(await RecognizeCropAsync(screen, rect, 3));
-        foreach (Match m in Regex.Matches(text, @"\d{1,3}").Cast<Match>().Reverse())
+
+        // 云顶金币数字常有描边/动画；同一帧做两个不同边界和缩放的OCR，避免个位被裁掉。
+        int padX = Math.Max(6, (int)Math.Round(16 * sx));
+        int padY = Math.Max(3, (int)Math.Round(5 * sy));
+        Rectangle expanded = Rectangle.Intersect(
+            new Rectangle(baseRect.Left - padX, baseRect.Top - padY,
+                baseRect.Width + padX * 2, baseRect.Height + padY * 2),
+            new Rectangle(Point.Empty, screen.Size));
+
+        string primary = Compact(await RecognizeCropAsync(screen, baseRect, 4));
+        string secondary = Compact(await RecognizeCropAsync(screen, expanded, 5));
+        var candidates = new List<int>();
+        candidates.AddRange(ParseNumericCandidates(primary, 0, 200));
+        candidates.AddRange(ParseNumericCandidates(secondary, 0, 200));
+        if (candidates.Count == 0) return null;
+
+        // 先按“出现次数”选；票数相同优先多位数。12->1 的场景通常会得到 [1,12]，这里选12。
+        int chosen = candidates
+            .GroupBy(x => x)
+            .OrderByDescending(g => g.Count())
+            .ThenByDescending(g => g.Key.ToString().Length)
+            .ThenBy(g => _lastGold.HasValue ? Math.Abs(g.Key - _lastGold.Value) : 0)
+            .Select(g => g.Key)
+            .First();
+
+        // 如果上一帧是多位数，而这一帧突然只剩它的首位，先保护1帧。
+        // 真正从12花到1时最多延迟约1秒；OCR瞬时截断则不会把经济判断直接带偏。
+        if (_lastGold is >= 10 && chosen < 10 &&
+            _lastGold.Value.ToString().StartsWith(chosen.ToString(), StringComparison.Ordinal))
         {
-            if (int.TryParse(m.Value, out int value) && value is >= 0 and <= 200)
-                return value;
+            _goldTruncationStreak++;
+            if (_goldTruncationStreak <= 1) return _lastGold;
         }
-        return null;
+        else
+        {
+            _goldTruncationStreak = 0;
+        }
+
+        _lastGold = chosen;
+        return chosen;
+    }
+
+    private static IEnumerable<int> ParseNumericCandidates(string text, int min, int max)
+    {
+        foreach (Match m in Regex.Matches(text ?? "", @"\d{1,3}").Cast<Match>())
+        {
+            if (int.TryParse(m.Value, out int value) && value >= min && value <= max)
+                yield return value;
+        }
     }
 
     private async Task<int?> RecognizeHpAsync(Bitmap screen, float sx, float sy)
@@ -130,22 +178,15 @@ public sealed class HudStateWatcher : IDisposable
         int y = selfCenterY - (int)Math.Round(_settings.HudSelfHpOffsetY * sy);
         int w = Math.Max(40, (int)Math.Round(_settings.HudSelfHpWidth * sx));
         int h = Math.Max(28, (int)Math.Round(_settings.HudSelfHpHeight * sy));
-        Rectangle rect = Rectangle.Intersect(new Rectangle(x, y, w, h), new Rectangle(Point.Empty, screen.Size));
+        Rectangle rect = Rectangle.Intersect(new Rectangle(x, y, w, h),
+            new Rectangle(Point.Empty, screen.Size));
         if (rect.Width < 30 || rect.Height < 20) return null;
 
         string text = Compact(await RecognizeCropAsync(screen, rect, 4));
-        foreach (Match m in Regex.Matches(text, @"\d{1,3}").Cast<Match>())
-        {
-            if (int.TryParse(m.Value, out int value) && value is >= 0 and <= 100)
-                return value;
-        }
+        foreach (int value in ParseNumericCandidates(text, 0, 100)) return value;
         return null;
     }
 
-    /// <summary>
-    /// 当前玩家的头像框明显比其它玩家大，并使用大量金黄色边框。
-    /// 在右侧头像区域做金色像素纵向积分，取能量最高的约 90px 行带。
-    /// </summary>
     private static int FindSelfPlayerCenterY(Bitmap screen, Rectangle sidebar)
     {
         int x0 = Math.Clamp(sidebar.Left + (int)(sidebar.Width * 0.38), 0, screen.Width - 1);
@@ -181,14 +222,11 @@ public sealed class HudStateWatcher : IDisposable
                 bestCenter = cy;
             }
         }
-
-        // 阈值只是排除完全没有玩家栏/界面被遮挡的情况。
         return bestScore >= 45 ? bestCenter : -1;
     }
 
     private static bool IsSelfGold(Color c)
     {
-        // 自身大头像外圈/血量牌的金色：高 R/G、低 B；排除红色敌方小头像框。
         return c.R >= 145 && c.G >= 100 && c.B <= 105 &&
                c.R - c.B >= 55 && c.G - c.B >= 25;
     }
@@ -197,7 +235,8 @@ public sealed class HudStateWatcher : IDisposable
     {
         if (rect.Width < 8 || rect.Height < 8) return "";
         using Bitmap crop = source.Clone(rect, PixelFormat.Format24bppRgb);
-        using Bitmap enlarged = new(Math.Max(1, crop.Width * scale), Math.Max(1, crop.Height * scale), PixelFormat.Format24bppRgb);
+        using Bitmap enlarged = new(Math.Max(1, crop.Width * scale),
+            Math.Max(1, crop.Height * scale), PixelFormat.Format24bppRgb);
         using (Graphics g = Graphics.FromImage(enlarged))
         {
             g.Clear(Color.Black);
@@ -210,7 +249,8 @@ public sealed class HudStateWatcher : IDisposable
     }
 
     private static string Compact(string value)
-        => Regex.Replace(value ?? "", @"\s+", "").Replace("一", "-").Replace("—", "-").Replace("－", "-");
+        => Regex.Replace(value ?? "", @"\s+", "")
+            .Replace("一", "-").Replace("—", "-").Replace("－", "-");
 
     private static Rectangle ScaleRect(int x, int y, int w, int h, float sx, float sy, Size bounds)
     {
@@ -231,7 +271,8 @@ public sealed class HudStateWatcher : IDisposable
             _lastLog = summary;
             string dir = Path.Combine(Application.StartupPath, "Logs", "AICoach");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "hud-state.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {summary}{Environment.NewLine}");
+            File.AppendAllText(Path.Combine(dir, "hud-state.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {summary}{Environment.NewLine}");
         }
         catch { }
     }
