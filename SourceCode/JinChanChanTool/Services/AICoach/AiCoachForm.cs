@@ -24,6 +24,8 @@ public sealed class AiCoachForm : Form
     private readonly TextBox _equipmentBox = new();
     private readonly TextBox _augmentBox = new();
     private readonly TextBox _emblemBox = new();
+    private readonly TextBox _heldHeroesBox = new();
+    private readonly TextBox _contestedHeroesBox = new();
     private readonly ListView _recommendationList = new();
     private readonly RichTextBox _aiOutput = new();
     private readonly Label _statusLabel = new();
@@ -43,8 +45,8 @@ public sealed class AiCoachForm : Form
 
         Text = "AI 云顶教练 V4.1";
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(860, 900);
-        MinimumSize = new Size(720, 760);
+        Size = new Size(900, 940);
+        MinimumSize = new Size(760, 800);
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
         ShowInTaskbar = true;
 
@@ -81,7 +83,7 @@ public sealed class AiCoachForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 11,
+            RowCount = 13,
             AutoScroll = true
         };
         coach.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
@@ -110,7 +112,7 @@ public sealed class AiCoachForm : Form
         _autoEquipmentCheck.AutoSize = true;
         _autoEquipmentCheck.Text = "自动识别";
         _autoEquipmentLabel.AutoSize = true;
-        _autoEquipmentLabel.MaximumSize = new Size(560, 0);
+        _autoEquipmentLabel.MaximumSize = new Size(600, 0);
         _autoEquipmentLabel.Text = "装备自动识别默认关闭；当前以手动确认数据为准。";
         autoEquipmentPanel.Controls.Add(_autoEquipmentCheck);
         autoEquipmentPanel.Controls.Add(_autoEquipmentLabel);
@@ -119,9 +121,13 @@ public sealed class AiCoachForm : Form
         ConfigureCsvBox(_equipmentBox, "可手动补充/纠错，例如：反曲之弓,暴风之剑");
         ConfigureCsvBox(_augmentBox, "输入本局已选强化符文；V4.1会直接参与阵容评分");
         ConfigureCsvBox(_emblemBox, "例如：花仙子纹章,神谕者纹章；V4.1会按目标羁绊加权");
+        ConfigureCsvBox(_heldHeroesBox, "可选：备战席/手里关键牌，例如：易,蔚,雷恩加尔");
+        ConfigureCsvBox(_contestedHeroesBox, "可选：明显被同行卡的核心，例如：维迦,卡西奥佩娅");
         AddRow(coach, 3, "确认装备", _equipmentBox);
         AddRow(coach, 4, "强化符文", _augmentBox);
         AddRow(coach, 5, "纹章/转职", _emblemBox);
+        AddRow(coach, 6, "持有棋子", _heldHeroesBox);
+        AddRow(coach, 7, "同行被卡", _contestedHeroesBox);
 
         _recommendationList.Dock = DockStyle.Fill;
         _recommendationList.View = View.Details;
@@ -134,8 +140,8 @@ public sealed class AiCoachForm : Form
         _recommendationList.Columns.Add("阶段", 54);
         _recommendationList.Columns.Add("置信度", 62);
         _recommendationList.Columns.Add("决策", 60);
-        _recommendationList.Columns.Add("现在做", 310);
-        AddRow(coach, 6, "推荐Top5", _recommendationList, 220);
+        _recommendationList.Columns.Add("现在做", 330);
+        AddRow(coach, 8, "推荐Top5", _recommendationList, 220);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
         var refreshButton = new Button { Text = "刷新推荐", AutoSize = true };
@@ -147,28 +153,28 @@ public sealed class AiCoachForm : Form
         buttons.Controls.Add(refreshButton);
         buttons.Controls.Add(analyzeButton);
         buttons.Controls.Add(captureButton);
-        AddRow(coach, 7, "操作", buttons);
+        AddRow(coach, 9, "操作", buttons);
 
         _statusLabel.AutoSize = true;
-        _statusLabel.MaximumSize = new Size(630, 0);
+        _statusLabel.MaximumSize = new Size(670, 0);
         _statusLabel.ForeColor = Color.DimGray;
         _statusLabel.Text = "V4.1：适配分不是胜率；按“决策 + 现在做”执行，低置信度时保留转阵空间。";
-        AddRow(coach, 8, "状态", _statusLabel, 64);
+        AddRow(coach, 10, "状态", _statusLabel, 64);
 
         _aiOutput.Dock = DockStyle.Fill;
         _aiOutput.ReadOnly = true;
         _aiOutput.BackColor = SystemColors.Window;
         _aiOutput.Height = 180;
-        AddRow(coach, 9, "AI操作指令", _aiOutput, 190);
+        AddRow(coach, 11, "AI操作指令", _aiOutput, 190);
 
         var policy = new Label
         {
             AutoSize = true,
-            MaximumSize = new Size(630, 0),
-            Text = "说明：任何推荐都不能保证单局结果。V4.1的目标是用当前棋盘、经济、血量与Meta减少常见掉分决策。",
+            MaximumSize = new Size(670, 0),
+            Text = "说明：任何推荐都不能保证单局结果。V4.1优先减少低血贪经济、错过D牌窗口、硬玩条件阵容和无依据高成本转阵。",
             ForeColor = Color.DimGray
         };
-        AddRow(coach, 10, "说明", policy);
+        AddRow(coach, 12, "说明", policy);
 
         var settings = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true };
         settings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
@@ -199,7 +205,7 @@ public sealed class AiCoachForm : Form
             AutoSize = true,
             MaximumSize = new Size(650, 0),
             Margin = new Padding(0, 18, 0, 0),
-            Text = "AI接口兼容 OpenAI 风格 /v1/chat/completions。V4.1实时推荐本身不依赖每秒调用AI；大模型只在你主动点“AI给出8行操作”或手动刷新Meta生成LineUps时调用。"
+            Text = "AI接口兼容 OpenAI 风格 /v1/chat/completions。V4.1实时推荐由本地决策引擎持续计算；大模型只在主动分析或手动刷新Meta生成LineUps时调用。"
         };
         settings.Controls.Add(help, 1, 6);
     }
@@ -283,6 +289,8 @@ public sealed class AiCoachForm : Form
             Equipments = autoEquipments.Concat(ParseCsv(_equipmentBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Augments = ParseCsv(_augmentBox.Text),
             Emblems = autoEmblems.Concat(ParseCsv(_emblemBox.Text)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            HeldHeroes = ParseCsv(_heldHeroesBox.Text),
+            ContestedHeroes = ParseCsv(_contestedHeroesBox.Text),
             Stage = _stageBox.Text.Trim(),
             Level = (int)_levelBox.Value,
             Gold = (int)_goldBox.Value,
@@ -318,7 +326,7 @@ public sealed class AiCoachForm : Form
             return;
         }
 
-        List<InventorySlotResult> detected = _inventoryResult.Slots
+        List<InventorySlotDetection> detected = _inventoryResult.Slots
             .Where(x => !string.IsNullOrWhiteSpace(x.Name)).ToList();
         if (detected.Count == 0)
         {
@@ -348,10 +356,10 @@ public sealed class AiCoachForm : Form
             string stage = rec.StageIndex switch { 0 => "前期", 1 => "中期", _ => "后期" };
             var item = new ListViewItem(rec.Name);
             item.SubItems.Add($"{rec.Score:0}");
-            item.SubItems.Add(stage); // 保持索引2，V4主程序联动依赖这个位置。
+            item.SubItems.Add(stage);
             item.SubItems.Add($"{rec.Confidence:0}%");
             item.SubItems.Add(rec.Decision);
-            item.SubItems.Add(Shorten(rec.NextAction, 42));
+            item.SubItems.Add(Shorten(rec.NextAction, 45));
             item.ToolTipText = rec.Reason;
             _recommendationList.Items.Add(item);
         }
