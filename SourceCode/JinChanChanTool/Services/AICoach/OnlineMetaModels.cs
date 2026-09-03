@@ -4,6 +4,10 @@ public sealed class OnlineMetaUnit
 {
     public string HeroName { get; set; } = "";
     public string[] EquipmentNames { get; set; } = ["", "", ""];
+
+    // MetaTFT 详情接口经匈牙利算法计算后的推荐站位；0 表示无可靠站位。
+    public int PositionRow { get; set; }
+    public int PositionColumn { get; set; }
 }
 
 public sealed class OnlineMetaComp
@@ -82,7 +86,9 @@ public static class OnlineMetaState
                 Units = c.Units.Select(u => new OnlineMetaUnit
                 {
                     HeroName = u.HeroName,
-                    EquipmentNames = u.EquipmentNames.ToArray()
+                    EquipmentNames = u.EquipmentNames.ToArray(),
+                    PositionRow = u.PositionRow,
+                    PositionColumn = u.PositionColumn
                 }).ToList()
             }).ToList()
         };
