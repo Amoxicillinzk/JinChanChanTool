@@ -103,7 +103,7 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
             };
             File.WriteAllText(
                 Path.Combine(LineupGenerationAssets.RootDirectory, "generation-report.json"),
-                JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+                System.Text.Json.JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
             WriteLog($"阵容库刷新成功：Meta {meta.Comps.Count}套 -> LineUps {generated.TotalCount}套；AI {generated.AiGeneratedCount}，规则回退 {generated.FallbackCount}；后期站位已应用MetaTFT数据。");
             progress?.Report("阵容库已更新并重新加载。AI教练与主程序现在使用同一套 Meta 阵容名称。 ");
@@ -218,7 +218,6 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
             var used = new HashSet<(int, int)>();
             var positioned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // 第一遍先锁定真实 Meta 站位。
             foreach (LineUpUnit unit in final)
             {
                 if (!units.TryGetValue(unit.HeroName, out OnlineMetaUnit? metaUnit)) continue;
@@ -228,7 +227,6 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
                 positioned.Add(unit.HeroName);
             }
 
-            // 第二遍给没有可靠 Meta 坐标的单位安排不冲突位置。
             foreach (LineUpUnit unit in final)
             {
                 if (positioned.Contains(unit.HeroName)) continue;
@@ -245,7 +243,6 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
 
     private static (int, int) FindFreePosition(HashSet<(int, int)> used)
     {
-        // 优先常用棋盘格，再兜底逐格扫描。
         (int, int)[] preferred =
         [
             (1, 2), (1, 4), (1, 6),
