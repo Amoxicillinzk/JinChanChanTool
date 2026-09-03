@@ -18,6 +18,7 @@ public static class MetaLineupV4Integration
     private static ListView? _recommendationList;
     private static bool _exitHooked;
     private static bool _attaching;
+    private static bool _refreshing;
 
     [ModuleInitializer]
     public static void Initialize()
@@ -42,7 +43,7 @@ public static class MetaLineupV4Integration
                 if (typeof(MainForm).GetField("_iheroDataService", flags)?.GetValue(main) is not IHeroDataService heroDataService)
                     return;
                 if (typeof(MainForm).GetField("_cardService", flags)?.GetValue(main) == null)
-                    return; // 等 Form_Load 完成。
+                    return;
 
                 _mainForm = main;
                 _coordinator = new MetaLineupRefreshCoordinator(main, lineUpService, heroDataService);
@@ -92,7 +93,7 @@ public static class MetaLineupV4Integration
 
     private static async Task RefreshMetaFromMainAsync()
     {
-        if (_coordinator == null || _refreshButton == null) return;
+        if (_coordinator == null || _refreshButton == null || _refreshing) return;
 
         AiCoachSettings settings = new AiCoachSettingsStore().Load();
         if (settings.GenerateLineUpsWithAi && string.IsNullOrWhiteSpace(settings.ApiKey))
@@ -105,10 +106,12 @@ public static class MetaLineupV4Integration
             if (choice != DialogResult.Yes) return;
         }
 
+        _refreshing = true;
         _refreshButton.Enabled = false;
         string original = _refreshButton.Text;
         _refreshButton.Text = "Meta刷新中...";
-        SetCoachStatus("V4：正在手动刷新 MetaTFT，并重新生成 LineUps.json...");
+        if (_recommendationList != null) _recommendationList.Enabled = false;
+        SetCoachStatus("V4：正在手动刷新 MetaTFT，并重新生成 LineUps.json；生成完成前暂时锁定阵容切换。 ");
 
         var progress = new Progress<string>(text =>
         {
@@ -136,6 +139,8 @@ public static class MetaLineupV4Integration
         }
         finally
         {
+            _refreshing = false;
+            if (_recommendationList != null) _recommendationList.Enabled = true;
             if (_refreshButton != null)
             {
                 _refreshButton.Enabled = true;
@@ -164,6 +169,11 @@ public static class MetaLineupV4Integration
     private static void RecommendationList_ItemSelectionChanged(object? sender, ListViewItemSelectionChangedEventArgs e)
     {
         if (!e.IsSelected || _coordinator == null) return;
+        if (_refreshing)
+        {
+            SetCoachStatus("Meta阵容库正在重建，完成后再选择推荐阵容。");
+            return;
+        }
 
         int stageIndex = 0;
         if (e.Item.SubItems.Count >= 3)
