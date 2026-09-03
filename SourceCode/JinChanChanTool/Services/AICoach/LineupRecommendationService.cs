@@ -149,7 +149,11 @@ public sealed class LineupRecommendationService
 
             bool sameAsCurrent = !string.IsNullOrWhiteSpace(currentSelectedName) &&
                 NormalizeName(currentSelectedName) == NormalizeName(comp.Name);
-            double continuityBonus = sameAsCurrent && stageIndex >= 1 && augmentFit.Score > -15 && strategyScore > -12
+            bool hasRouteEvidence = sameAsCurrent &&
+                (boardCore.Count + boardFlex.Count + heldCore.Count + heldFlex.Count > 0 ||
+                 directMatches.Count + componentMatches.Count > 0 ||
+                 emblemFit.Matches.Count > 0);
+            double continuityBonus = hasRouteEvidence && stageIndex >= 1 && augmentFit.Score > -15 && strategyScore > -12
                 ? stageIndex == 1 ? 4.0 : 6.0
                 : 0;
 
@@ -220,8 +224,8 @@ public sealed class LineupRecommendationService
             .Take(Math.Max(1, top))
             .ToList();
 
-        // V4.1 防抖：中后期如果当前已选路线仍在Top3且与新Top1差距不到4.5分，
-        // 继续保持当前路线，避免OCR波动或单轮商店导致无意义大转阵。
+        // V4.1 防抖：只有当前路线有棋盘/持有牌/装备等真实证据时才防抖。
+        // 主程序默认选中的阵容不能被误判为“玩家已锁阵”。
         if (stageIndex >= 1 && !string.IsNullOrWhiteSpace(currentSelectedName) && ordered.Count > 1)
         {
             int currentIndex = ordered.FindIndex(x =>
@@ -229,7 +233,8 @@ public sealed class LineupRecommendationService
             if (currentIndex is > 0 and <= 2)
             {
                 LineupRecommendation current = ordered[currentIndex];
-                if (ordered[0].Score - current.Score < 4.5 && current.RiskLevel != "高")
+                bool hasContinuityEvidence = current.Reason.Contains("当前已走该路线", StringComparison.OrdinalIgnoreCase);
+                if (hasContinuityEvidence && ordered[0].Score - current.Score < 4.5 && current.RiskLevel != "高")
                 {
                     ordered.RemoveAt(currentIndex);
                     ordered.Insert(0, current);
@@ -288,7 +293,12 @@ public sealed class LineupRecommendationService
             WinRateDecisionEngine.EmblemFit emblemFit = WinRateDecisionEngine.ScoreEmblems(state.Emblems, targetTraits);
 
             double transitionPenalty = WinRateDecisionEngine.CalculateTransitionPenalty(board, heroSet, state);
-            double continuityBonus = stageIndex >= 1 && NormalizeName(lineUp.LineUpName) == NormalizeName(currentSelectedName) ? 4 : 0;
+            bool sameAsCurrent = NormalizeName(lineUp.LineUpName) == NormalizeName(currentSelectedName);
+            bool hasRouteEvidence = sameAsCurrent &&
+                (matchedBoardHeroes.Count + matchedHeldHeroes.Count > 0 ||
+                 directMatches.Count + componentMatches.Count > 0 ||
+                 emblemFit.Matches.Count > 0);
+            double continuityBonus = stageIndex >= 1 && hasRouteEvidence ? 4 : 0;
             double contestPenalty = Math.Min(12, contestedHeroes.Count * 4.0);
             double score = Math.Clamp(
                 8 + matchedBoardHeroes.Count * 11.0 + traitCoverage * 24.0 + matchedShopHeroes.Count * 3.0 +
@@ -487,11 +497,17 @@ public sealed class LineupRecommendationService
             if (state.Level <= 7) return 1;
             return 2;
         }
+
         int liveLevel = LiveBoardState.GetSnapshot().InferredLevel;
         if (liveLevel > 0) return liveLevel <= 5 ? 0 : liveLevel <= 7 ? 1 : 2;
-        if (state.Stage.StartsWith("2-")) return 0;
-        if (state.Stage.StartsWith("3-")) return 1;
-        return 2;
+
+        string stage = state.Stage?.Trim() ?? "";
+        if (stage.StartsWith("1-") || stage.StartsWith("2-")) return 0;
+        if (stage.StartsWith("3-")) return 1;
+        if (stage.StartsWith("4-") || stage.StartsWith("5-") || stage.StartsWith("6-") || stage.StartsWith("7-")) return 2;
+
+        // V4.1：等级和阶段都未知时，宁可采用前期保守模板，也不能把启动瞬间误判成后期成型。
+        return 0;
     }
 
     private static bool IsRerollComp(OnlineMetaComp comp)
