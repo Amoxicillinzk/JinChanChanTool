@@ -8,8 +8,8 @@ using JinChanChanTool.Services;
 namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
-/// V2.1 不尝试识别棋盘上的 3D 英雄模型，而是 OCR 左侧羁绊计数。
-/// 羁绊计数本身就是“当前已上场棋子”的稳定投影；低等级时再结合 HeroData 反推唯一棋子组合。
+/// OCR 左侧羁绊计数，并结合 HeroData 反推当前棋盘。
+/// V4.1：候选组合不唯一时不再把英雄信号全部丢掉，而是返回所有候选组合的可靠交集。
 /// </summary>
 public sealed class BoardTraitWatcher : IDisposable
 {
@@ -28,7 +28,6 @@ public sealed class BoardTraitWatcher : IDisposable
         public int Cost { get; set; }
         public string[] Profession { get; set; } = [];
         public string[] Peculiarity { get; set; } = [];
-
         public string[] Traits => Profession.Concat(Peculiarity)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -39,7 +38,6 @@ public sealed class BoardTraitWatcher : IDisposable
     {
         _gameScreenBounds = Screen.FromControl(gameAnchor).Bounds;
         _settings = new AiCoachSettingsStore().Load();
-
         try
         {
             FieldInfo? field = typeof(CardService).GetField("_ocrService", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -49,7 +47,6 @@ public sealed class BoardTraitWatcher : IDisposable
         {
             _ocrService = null;
         }
-
         LoadHeroData();
     }
 
@@ -70,11 +67,7 @@ public sealed class BoardTraitWatcher : IDisposable
         }
         catch (Exception ex)
         {
-            LiveBoardState.Update(new LiveBoardSnapshot
-            {
-                Error = ex.Message,
-                CapturedAt = DateTime.Now
-            });
+            LiveBoardState.Update(new LiveBoardSnapshot { Error = ex.Message, CapturedAt = DateTime.Now });
         }
         finally
         {
@@ -92,14 +85,15 @@ public sealed class BoardTraitWatcher : IDisposable
         }
         if (_knownTraits.Count == 0)
         {
-            result.Error = "未加载到 S18 HeroData 羁绊数据。";
+            result.Error = "未加载到当前赛季 HeroData 羁绊数据。";
             return result;
         }
 
         using var screen = new Bitmap(_gameScreenBounds.Width, _gameScreenBounds.Height, PixelFormat.Format24bppRgb);
         using (Graphics g = Graphics.FromImage(screen))
         {
-            g.CopyFromScreen(_gameScreenBounds.Left, _gameScreenBounds.Top, 0, 0, _gameScreenBounds.Size, CopyPixelOperation.SourceCopy);
+            g.CopyFromScreen(_gameScreenBounds.Left, _gameScreenBounds.Top, 0, 0,
+                _gameScreenBounds.Size, CopyPixelOperation.SourceCopy);
         }
 
         float sx = screen.Width / (float)Math.Max(1, _settings.BoardReferenceWidth);
@@ -132,13 +126,14 @@ public sealed class BoardTraitWatcher : IDisposable
 
         result.Traits = traits;
         result.InferredLevel = await RecognizeLevelAsync(screen, sx, sy);
-        if (result.InferredLevel is >= 1 and <= 5 && traits.Count >= 2)
+
+        // 7级以上组合空间过大；到7级仍可在候选池足够小时做受限精确搜索。
+        if (result.InferredLevel is >= 1 and <= 7 && traits.Count >= 2)
         {
             (List<string> heroes, int combinations) = InferHeroes(traits, result.InferredLevel);
             result.InferredHeroes = heroes;
             result.CandidateCombinationCount = combinations;
         }
-
         return result;
     }
 
@@ -151,6 +146,7 @@ public sealed class BoardTraitWatcher : IDisposable
         if (rect.Width < 20 || rect.Height < 15) return 0;
         string text = Regex.Replace(await RecognizeCropAsync(screen, rect), @"\s+", "");
         Match match = Regex.Match(text, @"(?<level>1[0-5]|[1-9])级");
+        if (!match.Success) match = Regex.Match(text, @"(?<level>1[0-5]|[1-9])");
         return match.Success && int.TryParse(match.Groups["level"].Value, out int level) ? level : 0;
     }
 
@@ -173,7 +169,6 @@ public sealed class BoardTraitWatcher : IDisposable
         trait = "";
         current = 0;
         if (string.IsNullOrWhiteSpace(raw)) return false;
-
         string compact = Regex.Replace(raw, @"\s+", "");
         trait = _knownTraits.FirstOrDefault(x => compact.Contains(x, StringComparison.OrdinalIgnoreCase)) ?? "";
         if (trait.Length == 0) return false;
@@ -185,27 +180,28 @@ public sealed class BoardTraitWatcher : IDisposable
             current = 0;
             return false;
         }
-
         return current > 0;
     }
 
     private (List<string> Heroes, int CombinationCount) InferHeroes(Dictionary<string, int> observed, int level)
     {
-        var candidates = _heroes
+        List<HeroRow> candidates = _heroes
             .Where(h => h.Traits.Length > 0 && h.Traits.All(observed.ContainsKey))
             .OrderBy(h => h.Cost)
             .ThenBy(h => h.HeroName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (candidates.Count < level || candidates.Count > 28) return ([], 0);
+        if (candidates.Count < level || candidates.Count > 30) return ([], 0);
+        if (level >= 7 && candidates.Count > 20) return ([], 0);
 
+        const int solutionCap = 96;
         var solutions = new List<List<HeroRow>>();
         var chosen = new List<HeroRow>();
         var counts = observed.Keys.ToDictionary(x => x, _ => 0, StringComparer.OrdinalIgnoreCase);
 
         void Search(int start)
         {
-            if (solutions.Count >= 32) return;
+            if (solutions.Count >= solutionCap) return;
             if (chosen.Count == level)
             {
                 if (observed.All(pair => counts.GetValueOrDefault(pair.Key) == pair.Value))
@@ -239,10 +235,21 @@ public sealed class BoardTraitWatcher : IDisposable
         }
 
         Search(0);
+        if (solutions.Count == 0) return ([], 0);
         if (solutions.Count == 1)
             return (solutions[0].Select(x => x.HeroName).ToList(), 1);
 
-        return ([], solutions.Count);
+        // 多组解时只返回每组都出现的英雄。宁可少报，不把猜测当成事实。
+        var common = solutions[0].Select(x => x.HeroName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (List<HeroRow> solution in solutions.Skip(1))
+            common.IntersectWith(solution.Select(x => x.HeroName));
+
+        List<string> reliable = candidates
+            .Where(x => common.Contains(x.HeroName))
+            .Select(x => x.HeroName)
+            .ToList();
+        return (reliable, solutions.Count);
     }
 
     private static Rectangle ScaleRect(int x, int y, int w, int h, float sx, float sy, Size bounds)
@@ -288,14 +295,21 @@ public sealed class BoardTraitWatcher : IDisposable
         try
         {
             string traits = string.Join("、", snapshot.Traits.Select(x => $"{x.Key}{x.Value}"));
-            string heroes = snapshot.InferredHeroes.Count > 0 ? string.Join("、", snapshot.InferredHeroes) : $"未唯一反推({snapshot.CandidateCombinationCount}组候选)";
+            string heroes;
+            if (snapshot.InferredHeroes.Count > 0 && snapshot.CandidateCombinationCount > 1)
+                heroes = $"可靠交集:{string.Join("、", snapshot.InferredHeroes)}({snapshot.CandidateCombinationCount}组候选)";
+            else if (snapshot.InferredHeroes.Count > 0)
+                heroes = string.Join("、", snapshot.InferredHeroes);
+            else
+                heroes = $"未反推({snapshot.CandidateCombinationCount}组候选)";
+
             string summary = $"等级{snapshot.InferredLevel}|{traits}|{heroes}|{snapshot.Error}";
             if (summary == _lastLoggedSummary) return;
             _lastLoggedSummary = summary;
-
             string dir = Path.Combine(Application.StartupPath, "Logs", "AICoach");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "board-state.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {summary}{Environment.NewLine}");
+            File.AppendAllText(Path.Combine(dir, "board-state.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {summary}{Environment.NewLine}");
         }
         catch { }
     }
