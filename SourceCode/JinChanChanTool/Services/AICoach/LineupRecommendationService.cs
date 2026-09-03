@@ -119,7 +119,7 @@ public sealed class LineupRecommendationService
 
     private (double Coverage, List<string> MatchedTraits) MatchBoardTraits(
         Dictionary<string, int> observed,
-        IEnumerable<LineUp.LineUpUnit> units)
+        IEnumerable<LineUpUnit> units)
     {
         if (observed.Count == 0 || _heroTraits.Count == 0) return (0, []);
 
@@ -234,7 +234,6 @@ public sealed class LineupRecommendationService
             return 2;
         }
 
-        // 如果 AI 窗口里的等级仍为 0，优先使用棋盘 OCR 的实际等级。
         int liveLevel = LiveBoardState.GetSnapshot().InferredLevel;
         if (liveLevel > 0)
         {
