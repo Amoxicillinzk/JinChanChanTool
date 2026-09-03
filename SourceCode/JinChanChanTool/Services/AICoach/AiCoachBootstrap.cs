@@ -9,6 +9,7 @@ public static class AiCoachBootstrap
     private static AiCoachForm? _coachForm;
     private static BoardTraitWatcher? _boardWatcher;
     private static HudStateWatcher? _hudWatcher;
+    private static OnlineMetaService? _onlineMetaService;
     private static bool _attaching;
     private static bool _exitHooked;
 
@@ -48,15 +49,19 @@ public static class AiCoachBootstrap
             int y = Math.Max(working.Top + 8, Math.Min(main.Top, working.Bottom - _coachForm.Height));
             _coachForm.Location = new Point(Math.Max(working.Left, x), y);
 
-            ApplyV22UiState(_coachForm);
+            ApplyV3UiState(_coachForm);
             LiveBoardState.Changed += OnBoardStateChanged;
             LiveHudState.Changed += OnHudStateChanged;
+            OnlineMetaState.Changed += OnOnlineMetaChanged;
 
             _boardWatcher = new BoardTraitWatcher(main, cardService);
             _boardWatcher.Start();
 
             _hudWatcher = new HudStateWatcher(main, cardService);
             _hudWatcher.Start();
+
+            _onlineMetaService = new OnlineMetaService();
+            _onlineMetaService.Start();
 
             if (!_exitHooked)
             {
@@ -65,10 +70,13 @@ public static class AiCoachBootstrap
                 {
                     LiveBoardState.Changed -= OnBoardStateChanged;
                     LiveHudState.Changed -= OnHudStateChanged;
+                    OnlineMetaState.Changed -= OnOnlineMetaChanged;
                     _boardWatcher?.Dispose();
                     _boardWatcher = null;
                     _hudWatcher?.Dispose();
                     _hudWatcher = null;
+                    _onlineMetaService?.Dispose();
+                    _onlineMetaService = null;
                 };
             }
 
@@ -80,7 +88,7 @@ public static class AiCoachBootstrap
         }
     }
 
-    private static void ApplyV22UiState(AiCoachForm form)
+    private static void ApplyV3UiState(AiCoachForm form)
     {
         try
         {
@@ -92,105 +100,105 @@ public static class AiCoachBootstrap
             }
             if (typeof(AiCoachForm).GetField("_autoEquipmentLabel", flags)?.GetValue(form) is Label equipmentLabel)
             {
-                equipmentLabel.Text = "装备自动识别暂时关闭：下一步改为悬停 Tooltip OCR，当前可手动补充。";
+                equipmentLabel.Text = "装备自动识别暂时关闭：后续改为悬停 Tooltip OCR，当前可手动补充。";
             }
             if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
             {
-                statusLabel.Text = "V2.2：实时读取阶段/等级/金币/血量，并结合上场棋盘、羁绊与商店推荐。";
+                statusLabel.Text = "V3：正在加载当前版本在线 Meta；无在线数据时自动回退本地阵容库。";
             }
-            form.Text = "AI 云顶教练 V2.2｜正在读取实时局面...";
+            form.Text = "AI 云顶教练 V3｜在线Meta加载中...";
         }
         catch
         {
-            form.Text = "AI 云顶教练 V2.2";
+            form.Text = "AI 云顶教练 V3";
         }
+    }
+
+    private static void OnOnlineMetaChanged(OnlineMetaSnapshot snapshot)
+    {
+        AiCoachForm? form = _coachForm;
+        if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
+        try
+        {
+            form.BeginInvoke(new Action(() =>
+            {
+                if (form.IsDisposed) return;
+                UpdateWindowTitle(form);
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
+                {
+                    if (snapshot.HasData)
+                    {
+                        string cache = snapshot.FromCache ? "（缓存）" : "";
+                        statusLabel.Text = $"在线Meta：{snapshot.Source}{cache}，{snapshot.Comps.Count}套，更新 {snapshot.UpdatedAt:HH:mm}。推荐已改为在线版本数据驱动。";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(snapshot.Error))
+                    {
+                        statusLabel.Text = $"在线Meta暂不可用：{snapshot.Error}；当前使用本地阵容兜底。";
+                    }
+                }
+            }));
+        }
+        catch { }
     }
 
     private static void OnHudStateChanged(LiveHudSnapshot snapshot)
     {
         AiCoachForm? form = _coachForm;
         if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
-
         try
         {
             form.BeginInvoke(new Action(() =>
             {
                 if (form.IsDisposed) return;
                 var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-
                 if (!string.IsNullOrWhiteSpace(snapshot.Stage) &&
                     typeof(AiCoachForm).GetField("_stageBox", flags)?.GetValue(form) is TextBox stageBox)
                     stageBox.Text = snapshot.Stage;
-
                 if (snapshot.Level.HasValue &&
                     typeof(AiCoachForm).GetField("_levelBox", flags)?.GetValue(form) is NumericUpDown levelBox)
                     levelBox.Value = Math.Clamp(snapshot.Level.Value, (int)levelBox.Minimum, (int)levelBox.Maximum);
-
                 if (snapshot.Gold.HasValue &&
                     typeof(AiCoachForm).GetField("_goldBox", flags)?.GetValue(form) is NumericUpDown goldBox)
                     goldBox.Value = Math.Clamp(snapshot.Gold.Value, (int)goldBox.Minimum, (int)goldBox.Maximum);
-
                 if (snapshot.Hp.HasValue &&
                     typeof(AiCoachForm).GetField("_hpBox", flags)?.GetValue(form) is NumericUpDown hpBox)
                     hpBox.Value = Math.Clamp(snapshot.Hp.Value, (int)hpBox.Minimum, (int)hpBox.Maximum);
-
                 UpdateWindowTitle(form);
             }));
         }
-        catch
-        {
-            // 窗口关闭/句柄切换时忽略一次 UI 更新。
-        }
+        catch { }
     }
 
     private static void OnBoardStateChanged(LiveBoardSnapshot snapshot)
     {
         AiCoachForm? form = _coachForm;
         if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
-
         try
         {
             form.BeginInvoke(new Action(() =>
             {
                 if (form.IsDisposed) return;
                 UpdateWindowTitle(form);
-
-                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-                if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
-                {
-                    if (snapshot.InferredHeroes.Count > 0)
-                    {
-                        statusLabel.Text = $"已从羁绊反推上场：{string.Join("、", snapshot.InferredHeroes)}；阶段/等级/金币/血量同步自动读取。";
-                    }
-                    else if (snapshot.Traits.Count > 0)
-                    {
-                        string traits = string.Join("、", snapshot.Traits.Select(x => $"{x.Key}{x.Value}"));
-                        string suffix = snapshot.CandidateCombinationCount > 1
-                            ? $"；存在 {snapshot.CandidateCombinationCount} 组可能棋子，不强行猜英雄。"
-                            : "";
-                        statusLabel.Text = $"已识别上场羁绊：{traits}{suffix}；HUD 自动读取中。";
-                    }
-                }
             }));
         }
-        catch
-        {
-            // 窗口关闭/句柄切换时忽略一次 UI 更新。
-        }
+        catch { }
     }
 
     private static void UpdateWindowTitle(AiCoachForm form)
     {
         LiveHudSnapshot hud = LiveHudState.GetSnapshot();
         LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
+        OnlineMetaSnapshot meta = OnlineMetaState.GetSnapshot();
         string hudText = BuildHudTitle(hud);
+        string metaText = meta.HasData ? $"｜Meta {meta.Comps.Count}套" : "｜Meta兜底";
 
         if (board.InferredHeroes.Count > 0)
-            form.Text = $"AI 云顶教练 V2.2{hudText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
+            form.Text = $"AI 云顶教练 V3{hudText}{metaText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
         else if (board.Traits.Count > 0)
-            form.Text = $"AI 云顶教练 V2.2{hudText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
+            form.Text = $"AI 云顶教练 V3{hudText}{metaText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
         else
-            form.Text = $"AI 云顶教练 V2.2{hudText}";
+            form.Text = $"AI 云顶教练 V3{hudText}{metaText}";
     }
 
     private static string BuildHudTitle(LiveHudSnapshot hud)
