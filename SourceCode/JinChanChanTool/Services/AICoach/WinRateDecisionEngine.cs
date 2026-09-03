@@ -42,45 +42,48 @@ public static class WinRateDecisionEngine
     {
         string tags = string.Join(" ", comp.Tags).ToLowerInvariant();
         double score = 0;
+        bool levelKnown = state.Level > 0;
+        bool hpKnown = state.Hp > 0;
         bool reroll5 = ContainsAny(tags, "5级d", "5级 d", "level 5", "5 reroll");
         bool reroll6 = ContainsAny(tags, "6级d", "6级 d", "level 6", "6 reroll");
         bool reroll7 = ContainsAny(tags, "7级d", "7级 d", "level 7", "7 reroll", "7/8级d");
         bool fast8 = ContainsAny(tags, "速8", "fast 8", "8级");
         bool fast9 = ContainsAny(tags, "速9", "fast 9", "9级");
 
-        if (reroll5)
+        // 等级未知时绝不能把 Level=0 当成“<=5级”给低费D牌阵加分。
+        if (levelKnown && reroll5)
         {
             score += state.Level <= 5 ? 10 : state.Level == 6 ? 1 : -8;
             if (state.Level <= 5 && state.Gold >= 35) score += 3;
         }
-        if (reroll6)
+        if (levelKnown && reroll6)
         {
             score += state.Level == 6 ? 10 : state.Level <= 5 ? 4 : state.Level == 7 ? 1 : -6;
             if (state.Level == 6 && state.Gold >= 30) score += 3;
         }
-        if (reroll7)
+        if (levelKnown && reroll7)
         {
             score += state.Level == 7 ? 10 : state.Level == 6 ? 5 : state.Level <= 5 ? 1 : state.Level == 8 ? 0 : -5;
             if (state.Level is 7 or 8 && state.Gold >= 30) score += 3;
         }
 
-        if (fast8)
+        if (fast8 && levelKnown)
         {
-            if (state.Level >= 7 && state.Gold >= 30 && state.Hp >= 55) score += 8;
-            else if (state.Level <= 6 && state.Hp >= 70 && state.Gold >= 30) score += 4;
-            if (state.Hp is > 0 and < 50 && state.Level < 8) score -= 8;
+            if (hpKnown && state.Level >= 7 && state.Gold >= 30 && state.Hp >= 55) score += 8;
+            else if (hpKnown && state.Level <= 6 && state.Hp >= 70 && state.Gold >= 30) score += 4;
+            if (hpKnown && state.Hp < 50 && state.Level < 8) score -= 8;
             if (state.Gold < 15 && state.Level < 8) score -= 4;
         }
-        if (fast9)
+        if (fast9 && levelKnown)
         {
-            if (state.Level >= 8 && state.Gold >= 35 && state.Hp >= 60) score += 10;
-            else if (state.Level >= 7 && state.Gold >= 50 && state.Hp >= 75) score += 5;
-            if (state.Hp is > 0 and < 60) score -= 11;
+            if (hpKnown && state.Level >= 8 && state.Gold >= 35 && state.Hp >= 60) score += 10;
+            else if (hpKnown && state.Level >= 7 && state.Gold >= 50 && state.Hp >= 75) score += 5;
+            if (hpKnown && state.Hp < 60) score -= 11;
             if (state.Gold < 25 && state.Level < 9) score -= 7;
         }
 
         // 低血量阶段以“先活下来”为第一目标，任何需要长期贪经济的线路都降权。
-        if (state.Hp is > 0 and <= 35 && (fast8 || fast9)) score -= 5;
+        if (hpKnown && state.Hp <= 35 && (fast8 || fast9)) score -= 5;
         return Math.Clamp(score, -22, 14);
     }
 
@@ -94,7 +97,7 @@ public static class WinRateDecisionEngine
         {
             // 专属强化阵容没有录入强化时不能直接判死，但要给风险提示。
             if (LooksLikeUnrivaledComp(comp.Name))
-                return new AugmentFit(-18, [], "该阵容疑似依赖“Unrivaled/宿敌”专属强化；未录入强化符文时不要硬锁。" );
+                return new AugmentFit(-18, [], "该阵容疑似依赖“Unrivaled/宿敌”专属强化；未录入强化符文时不要硬锁。");
             return new AugmentFit(0, [], "");
         }
 
@@ -238,6 +241,11 @@ public static class WinRateDecisionEngine
             if (state.Gold >= 20) return "危险血线：本轮优先花钱提升即时战力，D到能稳住再停，不再贪长期经济。";
             return "危险血线：优先上最强战力和成装，暂停高成本转阵。";
         }
+
+        // 等级未知时禁止给出精确D牌等级/拉人口指令。
+        if (state.Level <= 0)
+            return "等级尚未可靠识别：先确认等级并按当前最强战力保血；暂不执行精确D牌或Fast8/9指令。";
+
         if (d5)
         {
             if (state.Level < 5) return "不要主动多升人口；攒钱到5级进入D牌窗口。";
@@ -257,6 +265,7 @@ public static class WinRateDecisionEngine
         }
         if (fast9)
         {
+            if (state.Hp <= 0) return "血量未知：不要机械速9；先确认血量并判断8级棋盘能否稳定作战。";
             if (state.Level >= 9) return "已到9级：把经济转成高费两星与完整前排，不再存无效金币。";
             if (state.Hp >= 65 && state.Gold >= 45) return "保持连胜/血量，优先攒钱拉9；8级只小D止血。";
             if (state.Hp < 55) return "暂缓速9：先在8级D出稳定两星四费/前排，血线稳定后再考虑9。";
@@ -264,6 +273,7 @@ public static class WinRateDecisionEngine
         }
         if (fast8)
         {
+            if (state.Hp <= 0) return "血量未知：先确认血量；当前保持经济但不要为了拉8连续牺牲战力。";
             if (state.Level < 7) return "保持经济，以拉7/8为主，当前只买能直接增强棋盘的牌。";
             if (state.Level == 7 && state.Hp < 50) return "7级先D一轮止血，形成两星前排/核心后再拉8。";
             if (state.Level < 8) return state.Gold >= 35 ? "经济允许：优先拉8进入主D窗口。" : "先恢复到30~40金币，再拉8集中搜核心。";
@@ -288,8 +298,13 @@ public static class WinRateDecisionEngine
     public static string ClassifyDecision(double score, double confidence, double margin, string risk, int rank)
     {
         if (risk == "高" && score < 50) return "不建议";
+
+        // 置信度闸门：信息不足时即使Meta先验很强，也不得让用户直接锁阵。
+        if (confidence < 45)
+            return rank == 0 && score >= 45 ? "观察" : "备选";
+
         if (rank == 0 && score >= 74 && confidence >= 65 && margin >= 7 && risk != "高") return "锁定";
-        if (rank == 0 && score >= 58 && risk != "高") return "主推";
+        if (rank == 0 && score >= 58 && confidence >= 50 && risk != "高") return "主推";
         if (rank <= 1 && score >= 48) return "观察";
         return "备选";
     }
