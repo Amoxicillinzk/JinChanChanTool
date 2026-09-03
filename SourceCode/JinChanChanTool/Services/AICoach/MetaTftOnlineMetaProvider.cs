@@ -43,7 +43,9 @@ public sealed class MetaTftOnlineMetaProvider : IOnlineMetaProvider
                     {
                         HeroName = u.HeroName.Trim(),
                         EquipmentNames = (u.EquipmentNames ?? ["", "", ""])
-                            .Take(3).Concat(Enumerable.Repeat("", 3)).Take(3).ToArray()
+                            .Take(3).Concat(Enumerable.Repeat("", 3)).Take(3).ToArray(),
+                        PositionRow = u.Position.Item1,
+                        PositionColumn = u.Position.Item2
                     })
                     .ToList()
             })
