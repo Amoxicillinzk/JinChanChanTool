@@ -19,7 +19,8 @@ public sealed class LineupGenerationResult
 
 /// <summary>
 /// 把标准化 MetaTFT 阵容转换成 JinChanChanTool 的 LineUps.json。
-/// AI 是首选生成器；任何批次失败或单阵容校验失败都会使用确定性规则引擎补齐。
+/// V4.1 中 AI 主要负责前中期真实过渡；后期最终单位、装备与有效 Meta 站位由确定性代码生成。
+/// 任何 AI 批次失败、费用不合理或结构不合格都会自动回退到确定性规则。
 /// </summary>
 public sealed class LineupGenerationEngine
 {
@@ -67,7 +68,10 @@ public sealed class LineupGenerationEngine
 
         LineupGenerationAssets.EnsureOnDisk();
         List<HeroCatalogRow> heroes = BuildHeroCatalog(heroDataService);
-        HashSet<string> validHeroes = heroes.Select(x => x.HeroName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, HeroCatalogRow> heroByName = heroes
+            .GroupBy(x => x.HeroName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        HashSet<string> validHeroes = heroByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         List<string> equipmentNames = LoadEquipmentCatalog(heroDataService);
         HashSet<string> validEquipment = equipmentNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -123,8 +127,9 @@ public sealed class LineupGenerationEngine
                 LineUp? lineup = null;
                 if (aiBatch.TryGetValue(comp.Name, out LineUp? aiLineup))
                 {
-                    lineup = NormalizeAndValidate(aiLineup, comp, validHeroes, validEquipment);
+                    lineup = NormalizeAndValidate(aiLineup, comp, heroByName, validHeroes, validEquipment);
                     if (lineup != null) result.AiGeneratedCount++;
+                    else result.Warnings.Add($"{comp.Name}：AI前中期模板未通过费用/结构校验，已使用确定性过渡。");
                 }
 
                 if (lineup == null)
@@ -139,7 +144,6 @@ public sealed class LineupGenerationEngine
             }
         }
 
-        // 去重并保持 Meta 排序。
         final = final
             .GroupBy(x => x.LineUpName, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
@@ -193,7 +197,7 @@ public sealed class LineupGenerationEngine
                 new
                 {
                     role = "system",
-                    content = "你是严格的 JSON 阵容库编译器。只输出满足用户给定 schema 的 JSON 数组，不输出 Markdown、解释或注释。"
+                    content = "你是严格的 JSON 阵容库编译器。只输出满足用户给定 schema 的 JSON 数组，不输出 Markdown、解释或注释。前中期必须符合真实费用与运营时点。"
                 },
                 new { role = "user", content = prompt }
             },
@@ -249,6 +253,7 @@ public sealed class LineupGenerationEngine
     private static LineUp? NormalizeAndValidate(
         LineUp input,
         OnlineMetaComp source,
+        Dictionary<string, HeroCatalogRow> heroByName,
         HashSet<string> validHeroes,
         HashSet<string> validEquipment)
     {
@@ -260,7 +265,8 @@ public sealed class LineupGenerationEngine
             SubLineUps = [new SubLineUp(), new SubLineUp(), new SubLineUp()]
         };
 
-        for (int stage = 0; stage < 3; stage++)
+        // AI只决定前/中期。后期在下面直接由Meta源数据重建，避免模型改掉核心、装备或站位。
+        for (int stage = 0; stage < 2; stage++)
         {
             List<LineUpUnit> units = input.SubLineUps[stage]?.LineUpUnits ?? [];
             var seenHeroes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -271,6 +277,11 @@ public sealed class LineupGenerationEngine
             {
                 string hero = unit.HeroName?.Trim() ?? "";
                 if (!validHeroes.Contains(hero) || !seenHeroes.Add(hero)) continue;
+                if (!heroByName.TryGetValue(hero, out HeroCatalogRow? heroData)) continue;
+
+                // 标准阶段模板不能依赖正常时点几乎拿不到的高费牌。
+                if (stage == 0 && heroData.Cost >= 4) return null;
+                if (stage == 1 && heroData.Cost >= 5) return null;
 
                 string[] equipments = NormalizeEquipmentArray(unit.EquipmentNames)
                     .Select(x => string.IsNullOrWhiteSpace(x) || validEquipment.Contains(x) ? x : "")
@@ -291,17 +302,30 @@ public sealed class LineupGenerationEngine
                 });
             }
 
-            int minimum = stage switch { 0 => 3, 1 => 4, _ => Math.Min(5, source.Units.Count) };
+            int minimum = stage == 0 ? 3 : 4;
             if (clean.Count < minimum) return null;
+
+            if (stage == 0)
+            {
+                int lowCost = clean.Count(u => heroByName.TryGetValue(u.HeroName, out HeroCatalogRow? h) && h.Cost <= 2);
+                if (lowCost < Math.Min(3, clean.Count)) return null;
+            }
+
             normalized.SubLineUps[stage].LineUpUnits = clean;
         }
 
-        // 后期至少覆盖大部分 Meta 最终单位，否则视为AI偏题，回退规则生成。
-        HashSet<string> finalHeroes = normalized.SubLineUps[2].LineUpUnits
-            .Select(x => x.HeroName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        int required = Math.Max(3, (int)Math.Ceiling(source.Units.Count * 0.65));
-        int hit = source.Units.Count(x => finalHeroes.Contains(x.HeroName));
-        return hit >= required ? normalized : null;
+        List<string> finalNames = source.Units
+            .Where(x => !string.IsNullOrWhiteSpace(x.HeroName))
+            .Select(x => x.HeroName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10)
+            .ToList();
+        List<HeroCatalogRow> catalogList = heroByName.Values.ToList();
+        normalized.SubLineUps[2].LineUpUnits = BuildUnits(
+            finalNames, source, heroByName, validEquipment, preferMetaPositions: true);
+
+        if (normalized.SubLineUps[2].LineUpUnits.Count < Math.Min(3, finalNames.Count)) return null;
+        return normalized;
     }
 
     private static LineUp BuildFallback(
@@ -309,7 +333,9 @@ public sealed class LineupGenerationEngine
         List<HeroCatalogRow> heroes,
         HashSet<string> validEquipment)
     {
-        Dictionary<string, HeroCatalogRow> catalog = heroes.ToDictionary(x => x.HeroName, StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, HeroCatalogRow> catalog = heroes
+            .GroupBy(x => x.HeroName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         HashSet<string> finalNames = comp.Units.Select(x => x.HeroName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         List<string> keyTraits = comp.Units
@@ -320,63 +346,96 @@ public sealed class LineupGenerationEngine
             .Select(g => g.Key)
             .ToList();
 
+        int TraitOverlap(HeroCatalogRow h) => h.Traits.Count(t => keyTraits.Contains(t, StringComparer.OrdinalIgnoreCase));
+
         List<string> extraEarly = heroes
             .Where(h => h.Cost <= 2 && !finalNames.Contains(h.HeroName))
-            .Select(h => new
-            {
-                h.HeroName,
-                h.Cost,
-                Overlap = h.Traits.Count(t => keyTraits.Contains(t, StringComparer.OrdinalIgnoreCase))
-            })
-            .Where(x => x.Overlap > 0)
-            .OrderByDescending(x => x.Overlap)
-            .ThenBy(x => x.Cost)
-            .Select(x => x.HeroName)
-            .Take(5)
+            .OrderByDescending(TraitOverlap)
+            .ThenBy(h => h.Cost)
+            .ThenBy(h => h.HeroName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => h.HeroName)
+            .Take(8)
             .ToList();
 
-        List<string> orderedFinal = comp.Units
-            .OrderByDescending(u => u.EquipmentNames.Count(x => !string.IsNullOrWhiteSpace(x)))
-            .ThenBy(u => catalog.TryGetValue(u.HeroName, out HeroCatalogRow? h) ? h.Cost : 9)
+        List<string> extraMid = heroes
+            .Where(h => h.Cost <= 3 && !finalNames.Contains(h.HeroName))
+            .OrderByDescending(TraitOverlap)
+            .ThenBy(h => h.Cost)
+            .ThenBy(h => h.HeroName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => h.HeroName)
+            .Take(10)
+            .ToList();
+
+        List<string> finalSourceOrder = comp.Units
+            .Where(u => !string.IsNullOrWhiteSpace(u.HeroName))
             .Select(u => u.HeroName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(10)
             .ToList();
 
-        List<string> cheapFinal = orderedFinal
+        List<string> affordableFinal = comp.Units
+            .Where(u => catalog.TryGetValue(u.HeroName, out HeroCatalogRow? h) && h.Cost <= 4)
+            .OrderByDescending(u => u.EquipmentNames.Count(x => !string.IsNullOrWhiteSpace(x)))
+            .ThenBy(u => catalog.TryGetValue(u.HeroName, out HeroCatalogRow? h) ? h.Cost : 9)
+            .Select(u => u.HeroName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        List<string> cheapFinal = affordableFinal
             .OrderBy(n => catalog.TryGetValue(n, out HeroCatalogRow? h) ? h.Cost : 9)
             .ToList();
 
-        List<string> early = extraEarly.Concat(cheapFinal)
+        List<string> early = extraEarly
+            .Concat(cheapFinal.Where(n => catalog.TryGetValue(n, out HeroCatalogRow? h) && h.Cost <= 3))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(5)
             .ToList();
-        if (early.Count < 4)
-            early = cheapFinal.Take(Math.Min(5, cheapFinal.Count)).ToList();
+        if (early.Count < 3)
+        {
+            early = heroes.Where(h => h.Cost <= 2)
+                .OrderByDescending(TraitOverlap)
+                .ThenBy(h => h.Cost)
+                .Select(h => h.HeroName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(4)
+                .ToList();
+        }
 
-        List<string> mid = orderedFinal
-            .Take(Math.Min(7, orderedFinal.Count))
-            .Concat(cheapFinal)
+        List<string> mid = cheapFinal
+            .Where(n => catalog.TryGetValue(n, out HeroCatalogRow? h) && h.Cost <= 3)
+            .Concat(extraMid)
+            .Concat(affordableFinal.Where(n => catalog.TryGetValue(n, out HeroCatalogRow? h) && h.Cost == 4))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(Math.Min(7, Math.Max(6, orderedFinal.Count)))
+            .Take(7)
             .ToList();
+        if (mid.Count < 5)
+        {
+            mid = heroes.Where(h => h.Cost <= 3)
+                .OrderByDescending(TraitOverlap)
+                .ThenBy(h => h.Cost)
+                .Select(h => h.HeroName)
+                .Concat(affordableFinal)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(6)
+                .ToList();
+        }
 
-        var lineup = new LineUp(comp.Name)
+        return new LineUp(comp.Name)
         {
             SubLineUps = [
-                new SubLineUp { LineUpUnits = BuildUnits(early, comp, catalog, validEquipment) },
-                new SubLineUp { LineUpUnits = BuildUnits(mid, comp, catalog, validEquipment) },
-                new SubLineUp { LineUpUnits = BuildUnits(orderedFinal, comp, catalog, validEquipment) }
+                new SubLineUp { LineUpUnits = BuildUnits(early, comp, catalog, validEquipment, preferMetaPositions: false) },
+                new SubLineUp { LineUpUnits = BuildUnits(mid, comp, catalog, validEquipment, preferMetaPositions: false) },
+                new SubLineUp { LineUpUnits = BuildUnits(finalSourceOrder, comp, catalog, validEquipment, preferMetaPositions: true) }
             ]
         };
-        return lineup;
     }
 
     private static List<LineUpUnit> BuildUnits(
         List<string> names,
         OnlineMetaComp comp,
         Dictionary<string, HeroCatalogRow> catalog,
-        HashSet<string> validEquipment)
+        HashSet<string> validEquipment,
+        bool preferMetaPositions)
     {
         Dictionary<string, OnlineMetaUnit> metaUnits = comp.Units
             .GroupBy(x => x.HeroName, StringComparer.OrdinalIgnoreCase)
@@ -387,21 +446,36 @@ public sealed class LineupGenerationEngine
         foreach (string name in names.Take(10))
         {
             string[] equipment = ["", "", ""];
-            if (metaUnits.TryGetValue(name, out OnlineMetaUnit? metaUnit))
+            OnlineMetaUnit? metaUnit = null;
+            if (metaUnits.TryGetValue(name, out OnlineMetaUnit? found))
             {
-                equipment = NormalizeEquipmentArray(metaUnit.EquipmentNames)
+                metaUnit = found;
+                equipment = NormalizeEquipmentArray(found.EquipmentNames)
                     .Select(x => string.IsNullOrWhiteSpace(x) || validEquipment.Contains(x) ? x : "")
                     .ToArray();
             }
 
-            bool frontline = IsFrontline(catalog.GetValueOrDefault(name), equipment);
-            (int row, int col) = FindRolePosition(frontline, result.Count, positions);
-            positions.Add((row, col));
+            (int row, int col) position;
+            bool validMetaPosition = preferMetaPositions && metaUnit != null &&
+                                     metaUnit.PositionRow is >= 1 and <= 4 &&
+                                     metaUnit.PositionColumn is >= 1 and <= 7 &&
+                                     !positions.Contains((metaUnit.PositionRow, metaUnit.PositionColumn));
+            if (validMetaPosition)
+            {
+                position = (metaUnit!.PositionRow, metaUnit.PositionColumn);
+            }
+            else
+            {
+                bool frontline = IsFrontline(catalog.GetValueOrDefault(name), equipment);
+                position = FindRolePosition(frontline, result.Count, positions);
+            }
+
+            positions.Add(position);
             result.Add(new LineUpUnit
             {
                 HeroName = name,
                 EquipmentNames = equipment,
-                Position = (row, col)
+                Position = position
             });
         }
         return result;
@@ -525,8 +599,9 @@ public sealed class LineupGenerationEngine
         {
             if (string.IsNullOrWhiteSpace(lineup.LineUpName)) throw new InvalidOperationException("存在空阵容名。");
             if (lineup.SubLineUps == null || lineup.SubLineUps.Length != 3) throw new InvalidOperationException($"{lineup.LineUpName} 的 SubLineUps 不是3个。");
-            foreach (SubLineUp sub in lineup.SubLineUps)
+            for (int stage = 0; stage < lineup.SubLineUps.Length; stage++)
             {
+                SubLineUp sub = lineup.SubLineUps[stage];
                 var heroes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var positions = new HashSet<(int, int)>();
                 foreach (LineUpUnit unit in sub.LineUpUnits)
