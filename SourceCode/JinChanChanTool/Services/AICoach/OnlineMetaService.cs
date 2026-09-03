@@ -3,8 +3,9 @@ using System.Text.Json;
 namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
-/// V3 在线阵容数据协调器：启动时先读本地缓存，再异步刷新在线 Meta。
-/// 游戏过程中只读 OnlineMetaState，不会每秒请求外网。
+/// 在线阵容数据协调器。
+/// V4 默认由 AI 教练启动时只读取本地缓存；只有用户点击“刷新Meta阵容”才强制访问 MetaTFT，
+/// 保证 AI 教练与已生成的 LineUps.json 锁定在同一次 Meta 快照。
 /// </summary>
 public sealed class OnlineMetaService : IDisposable
 {
@@ -14,6 +15,7 @@ public sealed class OnlineMetaService : IDisposable
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private System.Threading.Timer? _timer;
     private bool _disposed;
+    private bool _cacheLoaded;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -34,14 +36,17 @@ public sealed class OnlineMetaService : IDisposable
         _cachePath = Path.Combine(dir, "s18-online-meta.json");
     }
 
+    /// <summary>
+    /// 兼容旧 V3：加载缓存并允许后台按缓存时效刷新。
+    /// V4 AI教练不再调用此方法，而改用 LoadCacheOnly()。
+    /// </summary>
     public void Start()
     {
         if (!_settings.UseOnlineMeta || _timer != null) return;
 
-        LoadCache();
+        LoadCacheOnly();
         _ = RefreshAsync(force: false);
 
-        // 每5分钟检查一次；只有缓存超过配置时长才真正访问网络。
         _timer = new System.Threading.Timer(
             _ => _ = RefreshAsync(force: false),
             null,
@@ -49,6 +54,19 @@ public sealed class OnlineMetaService : IDisposable
             TimeSpan.FromMinutes(5));
     }
 
+    /// <summary>
+    /// V4：只载入本地最近一次 Meta 快照，不发起任何网络请求。
+    /// </summary>
+    public void LoadCacheOnly()
+    {
+        if (_disposed || !_settings.UseOnlineMeta || _cacheLoaded) return;
+        _cacheLoaded = true;
+        LoadCache();
+    }
+
+    /// <summary>
+    /// 用户手动刷新入口。无论缓存是否过期，都立即访问 MetaTFT。
+    /// </summary>
     public Task ForceRefreshAsync() => RefreshAsync(force: true);
 
     private async Task RefreshAsync(bool force)
@@ -89,7 +107,6 @@ public sealed class OnlineMetaService : IDisposable
                 }
             }
 
-            // 在线失败时不清空最近一次有效缓存。
             current = OnlineMetaState.GetSnapshot();
             if (current.HasData)
             {
@@ -124,7 +141,6 @@ public sealed class OnlineMetaService : IDisposable
             query = query.Where(x => x.PickRate >= 0.12 || x.Tier is "S" or "A");
         }
 
-        // 用户偏好阵容丰富：不只保留S/A，强力冷门也保留；最多120套避免异常接口污染内存。
         return query
             .OrderBy(x => TierOrder(x.Tier))
             .ThenBy(x => x.AverageRank <= 0 ? 99 : x.AverageRank)
@@ -138,13 +154,17 @@ public sealed class OnlineMetaService : IDisposable
     {
         try
         {
-            if (!File.Exists(_cachePath)) return;
+            if (!File.Exists(_cachePath))
+            {
+                WriteLog("本地尚无 Meta 缓存；等待用户手动点击“刷新Meta阵容”。");
+                return;
+            }
             OnlineMetaSnapshot? cached = JsonSerializer.Deserialize<OnlineMetaSnapshot>(File.ReadAllText(_cachePath), JsonOptions);
             if (cached?.Comps is not { Count: > 0 }) return;
             cached.FromCache = true;
-            cached.Source = string.IsNullOrWhiteSpace(cached.Source) ? "在线Meta缓存" : cached.Source + "缓存";
+            cached.Source = string.IsNullOrWhiteSpace(cached.Source) ? "MetaTFT缓存" : cached.Source.Replace("缓存", "") + "缓存";
             OnlineMetaState.Update(cached);
-            WriteLog($"已加载缓存：{cached.Comps.Count}套，更新时间 {cached.UpdatedAt:yyyy-MM-dd HH:mm:ss}。");
+            WriteLog($"已加载固定Meta缓存：{cached.Comps.Count}套，更新时间 {cached.UpdatedAt:yyyy-MM-dd HH:mm:ss}；不会后台自动换版本。");
         }
         catch (Exception ex)
         {
