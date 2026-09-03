@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using JinChanChanTool.DataClass;
 using JinChanChanTool.Services.DataServices.Interface;
+using Newtonsoft.Json;
 
 namespace JinChanChanTool.Services.AICoach;
 
@@ -70,6 +71,10 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
                 progress,
                 cancellationToken);
 
+            // MetaTFT 详情接口本身已经计算了推荐站位。无论该套是AI生成还是规则回退，
+            // 后期成型阵容都优先应用真实 MetaTFT 站位，避免模型凭经验猜最终棋盘。
+            generated.Json = ApplyMetaFinalPositions(generated.Json, meta);
+
             string lineupPath = GetCurrentLineupsPath();
             string backup = BackupCurrentLineups(lineupPath);
             string generatedCopy = Path.Combine(LineupGenerationAssets.RootDirectory, "LineUps.generated.json");
@@ -78,7 +83,6 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
             progress?.Report($"生成 {generated.TotalCount} 套阵容，正在更新 JinChanChanTool...");
             WriteAtomically(lineupPath, generated.Json);
 
-            // 原服务直接重新读取新 LineUps.json。
             _lineUpService.ReLoad(_heroDataService);
             RefreshMainUi();
 
@@ -92,6 +96,7 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
                 aiGeneratedCount = generated.AiGeneratedCount,
                 fallbackCount = generated.FallbackCount,
                 model = generated.Model,
+                metaPositioningApplied = true,
                 outputPath = lineupPath,
                 backupPath = backup,
                 warnings = generated.Warnings
@@ -100,7 +105,7 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
                 Path.Combine(LineupGenerationAssets.RootDirectory, "generation-report.json"),
                 JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
-            WriteLog($"阵容库刷新成功：Meta {meta.Comps.Count}套 -> LineUps {generated.TotalCount}套；AI {generated.AiGeneratedCount}，规则回退 {generated.FallbackCount}。");
+            WriteLog($"阵容库刷新成功：Meta {meta.Comps.Count}套 -> LineUps {generated.TotalCount}套；AI {generated.AiGeneratedCount}，规则回退 {generated.FallbackCount}；后期站位已应用MetaTFT数据。");
             progress?.Report("阵容库已更新并重新加载。AI教练与主程序现在使用同一套 Meta 阵容名称。 ");
 
             return new MetaLineupRefreshResult
@@ -188,6 +193,72 @@ public sealed class MetaLineupRefreshCoordinator : IDisposable
         string temp = path + ".v4.tmp";
         File.WriteAllText(temp, content);
         File.Move(temp, path, overwrite: true);
+    }
+
+    private static string ApplyMetaFinalPositions(string json, OnlineMetaSnapshot meta)
+    {
+        List<LineUp>? lineups = JsonConvert.DeserializeObject<List<LineUp>>(json);
+        if (lineups == null) return json;
+
+        Dictionary<string, OnlineMetaComp> metaByName = meta.Comps
+            .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (LineUp lineup in lineups)
+        {
+            if (lineup.SubLineUps == null || lineup.SubLineUps.Length < 3) continue;
+            if (!metaByName.TryGetValue(lineup.LineUpName, out OnlineMetaComp? comp)) continue;
+
+            List<LineUpUnit> final = lineup.SubLineUps[2].LineUpUnits ?? [];
+            Dictionary<string, OnlineMetaUnit> units = comp.Units
+                .Where(x => x.PositionRow is >= 1 and <= 4 && x.PositionColumn is >= 1 and <= 7)
+                .GroupBy(x => x.HeroName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            var used = new HashSet<(int, int)>();
+            var positioned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // 第一遍先锁定真实 Meta 站位。
+            foreach (LineUpUnit unit in final)
+            {
+                if (!units.TryGetValue(unit.HeroName, out OnlineMetaUnit? metaUnit)) continue;
+                var position = (metaUnit.PositionRow, metaUnit.PositionColumn);
+                if (!used.Add(position)) continue;
+                unit.Position = position;
+                positioned.Add(unit.HeroName);
+            }
+
+            // 第二遍给没有可靠 Meta 坐标的单位安排不冲突位置。
+            foreach (LineUpUnit unit in final)
+            {
+                if (positioned.Contains(unit.HeroName)) continue;
+                (int row, int col) = unit.Position;
+                if (row is >= 1 and <= 4 && col is >= 1 and <= 7 && used.Add((row, col)))
+                    continue;
+                unit.Position = FindFreePosition(used);
+                used.Add(unit.Position);
+            }
+        }
+
+        return JsonConvert.SerializeObject(lineups, Formatting.Indented);
+    }
+
+    private static (int, int) FindFreePosition(HashSet<(int, int)> used)
+    {
+        // 优先常用棋盘格，再兜底逐格扫描。
+        (int, int)[] preferred =
+        [
+            (1, 2), (1, 4), (1, 6),
+            (2, 1), (2, 3), (2, 5), (2, 7),
+            (4, 2), (4, 4), (4, 6),
+            (3, 1), (3, 3), (3, 5), (3, 7)
+        ];
+        foreach (var p in preferred)
+            if (!used.Contains(p)) return p;
+        for (int r = 1; r <= 4; r++)
+            for (int c = 1; c <= 7; c++)
+                if (!used.Contains((r, c))) return (r, c);
+        return (4, 7);
     }
 
     private void RefreshMainUi()
