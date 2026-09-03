@@ -9,7 +9,8 @@ namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
 /// OCR 左侧羁绊计数，并结合 HeroData 反推当前棋盘。
-/// V4.1：候选组合不唯一时不再把英雄信号全部丢掉，而是返回所有候选组合的可靠交集。
+/// V4.1：候选组合不唯一时不再把英雄信号全部丢掉，而是返回所有完整候选组合的可靠交集。
+/// 若组合搜索达到上限，则不再声称任何英雄“可靠”，避免截断搜索产生假交集。
 /// </summary>
 public sealed class BoardTraitWatcher : IDisposable
 {
@@ -231,15 +232,23 @@ public sealed class BoardTraitWatcher : IDisposable
                 Search(i + 1);
                 foreach (string t in hero.Traits) counts[t] = Math.Max(0, counts.GetValueOrDefault(t) - 1);
                 chosen.RemoveAt(chosen.Count - 1);
+
+                if (solutions.Count >= solutionCap) return;
             }
         }
 
         Search(0);
         if (solutions.Count == 0) return ([], 0);
+
+        // 搜索触顶意味着结果集并不完整；此时任何“交集英雄”都可能被第97组之后的解推翻。
+        // 因此只保留羁绊信号，不输出英雄事实。
+        if (solutions.Count >= solutionCap)
+            return ([], solutionCap);
+
         if (solutions.Count == 1)
             return (solutions[0].Select(x => x.HeroName).ToList(), 1);
 
-        // 多组解时只返回每组都出现的英雄。宁可少报，不把猜测当成事实。
+        // 多组完整解时只返回每组都出现的英雄。宁可少报，不把猜测当成事实。
         var common = solutions[0].Select(x => x.HeroName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (List<HeroRow> solution in solutions.Skip(1))
@@ -296,7 +305,9 @@ public sealed class BoardTraitWatcher : IDisposable
         {
             string traits = string.Join("、", snapshot.Traits.Select(x => $"{x.Key}{x.Value}"));
             string heroes;
-            if (snapshot.InferredHeroes.Count > 0 && snapshot.CandidateCombinationCount > 1)
+            if (snapshot.CandidateCombinationCount >= 96 && snapshot.InferredHeroes.Count == 0)
+                heroes = "候选>=96组，已禁用英雄反推，仅使用羁绊";
+            else if (snapshot.InferredHeroes.Count > 0 && snapshot.CandidateCombinationCount > 1)
                 heroes = $"可靠交集:{string.Join("、", snapshot.InferredHeroes)}({snapshot.CandidateCombinationCount}组候选)";
             else if (snapshot.InferredHeroes.Count > 0)
                 heroes = string.Join("、", snapshot.InferredHeroes);
