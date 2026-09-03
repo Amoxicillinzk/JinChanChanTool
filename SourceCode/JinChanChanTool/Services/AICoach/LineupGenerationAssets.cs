@@ -35,7 +35,7 @@ public static class LineupGenerationAssets
 - `01-LineUps生成提示词.md`：可直接发送给任意 OpenAI-compatible 大模型的完整提示词。
 - `02-LineUps生成规则.md`：字段、前中后期、英雄/装备/站位的硬约束。
 - `03-LineUps模板.json`：最终输出 JSON 的结构模板。
-- `meta-source.json`：最近一次 MetaTFT 标准化数据。
+- `meta-source.json`：最近一次 MetaTFT 标准化数据，包含阵容统计、最终棋子、推荐装备、标签以及可用时的推荐站位。
 - `hero-catalog.json`：当前赛季合法英雄、费用与羁绊。
 - `equipment-catalog.json`：当前赛季合法装备名。
 - `LineUps.generated.json`：最近一次通过校验的生成结果。
@@ -53,7 +53,7 @@ public static class LineupGenerationAssets
 
 # 输入
 程序会在本提示词末尾附加：
-1. `本批Meta阵容`：若干个 MetaTFT 阵容，包含名称、Tier、平均名次、前四率、登顶率、登场率、标签、最终英雄与推荐装备。
+1. `本批Meta阵容`：若干个 MetaTFT 阵容，包含名称、Tier、平均名次、前四率、登顶率、登场率、标签、最终英雄、推荐装备，以及可用时每个最终英雄的 `PositionRow/PositionColumn` 推荐站位。
 2. `合法英雄目录`：当前 S18 全部英雄的中文名、费用、职业/特质。
 3. `合法装备目录`：当前 S18 全部合法装备中文名。
 
@@ -69,7 +69,7 @@ public static class LineupGenerationAssets
 # 前中后期定义
 - 前期：通常 4~5 人。目标是自然过渡、保血、低费打工，并优先保留能通向最终阵容的核心低费牌。
 - 中期：通常 6~7 人。目标是形成核心羁绊/主要D牌骨架。若 Meta 标签明确写“5级D、6级D、7级D、Reroll”，必须围绕该等级设计。
-- 后期：7~10 人。必须尽可能忠实于 MetaTFT 的最终 Units。MetaTFT 明确给出的核心主C/主坦和装备必须保留。
+- 后期：7~10 人。必须尽可能忠实于 MetaTFT 的最终 Units。MetaTFT 明确给出的核心主C/主坦、装备和推荐站位必须优先保留。
 
 允许前期/中期使用最终阵容之外的合法打工英雄，但只能在满足以下条件时使用：
 - 与最终核心共享关键羁绊，或
@@ -88,8 +88,11 @@ public static class LineupGenerationAssets
 JinChanChanTool 棋盘坐标固定：
 - Item1 = 行，只允许 1~4；1 为前排，4 为最后排。
 - Item2 = 列，只允许 1~7。
+- MetaTFT 输入中的 `PositionRow` 对应输出 `Position.Item1`，`PositionColumn` 对应 `Position.Item2`。
+- 当 MetaTFT 给出了 1~4 / 1~7 范围内的有效推荐坐标时，**后期必须原样优先采用该坐标**；不要把真实 MetaTFT 站位替换成自己想象的站位。
+- 只有 PositionRow/PositionColumn 为0、越界或缺失时，才根据角色自行补站位。
 - 同一个 SubLineUp 内不允许两个英雄占用相同坐标。
-- 主坦/近战通常放1~2排；远程主C通常放4排；站位应分散且可实际摆放。
+- 前期/中期：主坦/近战通常放1~2排；远程主C通常放4排；站位应分散且可实际摆放。
 
 # 强制校验规则
 - 英雄名必须逐字存在于合法英雄目录。
@@ -102,10 +105,10 @@ JinChanChanTool 棋盘坐标固定：
 # 质量目标
 优先级从高到低：
 1. JSON 可被软件读取；
-2. 后期忠实于 MetaTFT；
+2. 后期忠实于 MetaTFT 的最终英雄、装备和站位；
 3. 前中期符合真实运营节奏；
 4. 核心装备承接合理；
-5. 站位合法；
+5. 前中期站位合法；
 6. 不臆造数据。
 """;
 
@@ -140,6 +143,7 @@ JinChanChanTool 的“前期 / 中期 / 后期”三个按钮直接切换这三�
 ## 5. MetaTFT 数据解释
 - 有装备的英雄通常视为更高核心权重，但不要认为无装备英雄一定是无关挂件。
 - Tags 中的 Reroll / Level 5 / Level 6 / Level 7 / Fast 8 / Fast 9 等信息决定中期运营节点。
+- PositionRow/PositionColumn 是 MetaTFT 最终阵容推荐站位，后期应优先转成 Position.Item1/Item2。
 - Tier、AverageRank、TopFourRate、WinRate、PickRate用于选择需要生成的阵容，不写入 LineUps.json。
 
 ## 6. 名称联动规则
@@ -150,6 +154,7 @@ LineUpName 必须与 MetaTFT 标准化 Name 完全一致。AI 教练点击推荐
 - 禁止杜撰装备。
 - 禁止把胜率、TOP序号、Tier拼进阵容名。
 - 禁止把三个阶段做成“标准/镜像/缩角站位”；三个阶段就是运营时间轴。
+- 禁止在 MetaTFT 已提供有效最终站位时自行覆盖成另一个后期站位。
 - 禁止输出注释或 Markdown。
 """;
 
