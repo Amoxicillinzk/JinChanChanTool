@@ -2,7 +2,7 @@ namespace JinChanChanTool.Services.AICoach;
 
 /// <summary>
 /// 游戏 HUD 的实时识别结果。字段使用 nullable，避免一次 OCR 失败把上一次有效值覆盖成 0。
-/// V4.1 在阶段从中后期回跳到 2 阶段时识别为新对局，并清除上一局 HUD 残留。
+/// V4.1 对“中后期 -> 2阶段”的回跳做双帧确认，确认新对局后再清除上一局 HUD 残留。
 /// </summary>
 public sealed class LiveHudSnapshot
 {
@@ -24,6 +24,7 @@ public static class LiveHudState
 {
     private static readonly object Sync = new();
     private static LiveHudSnapshot _current = new();
+    private static int _newGameStage2Streak;
 
     public static event Action<LiveHudSnapshot>? Changed;
 
@@ -37,7 +38,8 @@ public static class LiveHudState
 
     /// <summary>
     /// 合并一次扫描。只有本轮实际识别成功的字段才覆盖旧值。
-    /// 若检测到上一局中后期 -> 新一局2阶段，则先清空旧局 HUD，避免旧等级/金币/血量污染新局推荐。
+    /// 若连续两次检测到上一局中后期 -> 新一局2阶段，则先清空旧局 HUD。
+    /// 第一帧可疑回跳不会写入任何数值，避免一次 OCR 毛刺污染当前决策。
     /// </summary>
     public static void Merge(LiveHudSnapshot partial)
     {
@@ -45,9 +47,31 @@ public static class LiveHudState
         lock (Sync)
         {
             DateTime now = partial.CapturedAt == DateTime.MinValue ? DateTime.Now : partial.CapturedAt;
+            int previousMajor = ParseStageMajor(_current.Stage);
+            int incomingMajor = ParseStageMajor(partial.Stage);
+            bool suspiciousRollback = previousMajor >= 3 && incomingMajor == 2;
 
-            if (IsNewGameTransition(_current.Stage, partial.Stage))
+            if (suspiciousRollback)
+            {
+                _newGameStage2Streak++;
+                if (_newGameStage2Streak < 2)
+                {
+                    _current.Error = "检测到疑似新对局阶段回跳，等待下一帧确认。";
+                    _current.CapturedAt = now;
+                    copy = Clone(_current);
+                    Monitor.Exit(Sync);
+                    try { Changed?.Invoke(copy); }
+                    finally { Monitor.Enter(Sync); }
+                    return;
+                }
+
                 _current = new LiveHudSnapshot();
+                _newGameStage2Streak = 0;
+            }
+            else if (incomingMajor > 0)
+            {
+                _newGameStage2Streak = 0;
+            }
 
             if (!string.IsNullOrWhiteSpace(partial.Stage))
             {
@@ -83,16 +107,10 @@ public static class LiveHudState
         lock (Sync)
         {
             _current = new LiveHudSnapshot { CapturedAt = DateTime.Now };
+            _newGameStage2Streak = 0;
             copy = Clone(_current);
         }
         Changed?.Invoke(copy);
-    }
-
-    private static bool IsNewGameTransition(string? previous, string? current)
-    {
-        int previousMajor = ParseStageMajor(previous);
-        int currentMajor = ParseStageMajor(current);
-        return previousMajor >= 3 && currentMajor == 2;
     }
 
     private static int ParseStageMajor(string? stage)
