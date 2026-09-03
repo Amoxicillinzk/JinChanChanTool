@@ -50,6 +50,7 @@ public static class AiCoachBootstrap
 
             ApplyV22UiState(_coachForm);
             LiveBoardState.Changed += OnBoardStateChanged;
+            LiveHudState.Changed += OnHudStateChanged;
 
             _boardWatcher = new BoardTraitWatcher(main, cardService);
             _boardWatcher.Start();
@@ -63,6 +64,7 @@ public static class AiCoachBootstrap
                 Application.ApplicationExit += (_, _) =>
                 {
                     LiveBoardState.Changed -= OnBoardStateChanged;
+                    LiveHudState.Changed -= OnHudStateChanged;
                     _boardWatcher?.Dispose();
                     _boardWatcher = null;
                     _hudWatcher?.Dispose();
@@ -104,6 +106,43 @@ public static class AiCoachBootstrap
         }
     }
 
+    private static void OnHudStateChanged(LiveHudSnapshot snapshot)
+    {
+        AiCoachForm? form = _coachForm;
+        if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
+
+        try
+        {
+            form.BeginInvoke(new Action(() =>
+            {
+                if (form.IsDisposed) return;
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+
+                if (!string.IsNullOrWhiteSpace(snapshot.Stage) &&
+                    typeof(AiCoachForm).GetField("_stageBox", flags)?.GetValue(form) is TextBox stageBox)
+                    stageBox.Text = snapshot.Stage;
+
+                if (snapshot.Level.HasValue &&
+                    typeof(AiCoachForm).GetField("_levelBox", flags)?.GetValue(form) is NumericUpDown levelBox)
+                    levelBox.Value = Math.Clamp(snapshot.Level.Value, (int)levelBox.Minimum, (int)levelBox.Maximum);
+
+                if (snapshot.Gold.HasValue &&
+                    typeof(AiCoachForm).GetField("_goldBox", flags)?.GetValue(form) is NumericUpDown goldBox)
+                    goldBox.Value = Math.Clamp(snapshot.Gold.Value, (int)goldBox.Minimum, (int)goldBox.Maximum);
+
+                if (snapshot.Hp.HasValue &&
+                    typeof(AiCoachForm).GetField("_hpBox", flags)?.GetValue(form) is NumericUpDown hpBox)
+                    hpBox.Value = Math.Clamp(snapshot.Hp.Value, (int)hpBox.Minimum, (int)hpBox.Maximum);
+
+                UpdateWindowTitle(form);
+            }));
+        }
+        catch
+        {
+            // 窗口关闭/句柄切换时忽略一次 UI 更新。
+        }
+    }
+
     private static void OnBoardStateChanged(LiveBoardSnapshot snapshot)
     {
         AiCoachForm? form = _coachForm;
@@ -114,21 +153,23 @@ public static class AiCoachBootstrap
             form.BeginInvoke(new Action(() =>
             {
                 if (form.IsDisposed) return;
-                LiveHudSnapshot hud = LiveHudState.GetSnapshot();
-                string hudText = BuildHudTitle(hud);
+                UpdateWindowTitle(form);
 
-                if (snapshot.InferredHeroes.Count > 0)
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
                 {
-                    form.Text = $"AI 云顶教练 V2.2{hudText}｜上场：{string.Join(" / ", snapshot.InferredHeroes)}";
-                }
-                else if (snapshot.Traits.Count > 0)
-                {
-                    string traits = string.Join(" / ", snapshot.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"));
-                    form.Text = $"AI 云顶教练 V2.2{hudText}｜羁绊：{traits}";
-                }
-                else if (!string.IsNullOrWhiteSpace(snapshot.Error))
-                {
-                    form.Text = $"AI 云顶教练 V2.2{hudText}｜棋盘识别待校准";
+                    if (snapshot.InferredHeroes.Count > 0)
+                    {
+                        statusLabel.Text = $"已从羁绊反推上场：{string.Join("、", snapshot.InferredHeroes)}；阶段/等级/金币/血量同步自动读取。";
+                    }
+                    else if (snapshot.Traits.Count > 0)
+                    {
+                        string traits = string.Join("、", snapshot.Traits.Select(x => $"{x.Key}{x.Value}"));
+                        string suffix = snapshot.CandidateCombinationCount > 1
+                            ? $"；存在 {snapshot.CandidateCombinationCount} 组可能棋子，不强行猜英雄。"
+                            : "";
+                        statusLabel.Text = $"已识别上场羁绊：{traits}{suffix}；HUD 自动读取中。";
+                    }
                 }
             }));
         }
@@ -136,6 +177,20 @@ public static class AiCoachBootstrap
         {
             // 窗口关闭/句柄切换时忽略一次 UI 更新。
         }
+    }
+
+    private static void UpdateWindowTitle(AiCoachForm form)
+    {
+        LiveHudSnapshot hud = LiveHudState.GetSnapshot();
+        LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
+        string hudText = BuildHudTitle(hud);
+
+        if (board.InferredHeroes.Count > 0)
+            form.Text = $"AI 云顶教练 V2.2{hudText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
+        else if (board.Traits.Count > 0)
+            form.Text = $"AI 云顶教练 V2.2{hudText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
+        else
+            form.Text = $"AI 云顶教练 V2.2{hudText}";
     }
 
     private static string BuildHudTitle(LiveHudSnapshot hud)
