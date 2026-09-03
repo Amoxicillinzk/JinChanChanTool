@@ -73,8 +73,20 @@ public static class HeroCopyRaceEvaluator
             }
         }
 
+        // 同行惩罚看“相对竞争态势”，不是只看对方绝对张数。
+        // 自己已经7~8张且明显领先时，对方少量库存不应把接近完成的三星路线重罚。
         double contestPenalty = reroll
-            ? Math.Min(32, races.Sum(x => x.Contested > 0 ? 3.0 + x.Contested * 2.2 : 0))
+            ? Math.Min(32, races.Sum(race =>
+            {
+                if (race.Contested <= 0) return 0.0;
+                if (race.Held >= 8 && race.Delta >= 5)
+                    return 0.5 + race.Contested * 0.35;
+                if (race.Held >= 7 && race.Delta >= 3)
+                    return 1.0 + race.Contested * 0.55;
+                if (race.Held >= 5 && race.Delta >= 2)
+                    return 1.5 + race.Contested * 0.90;
+                return 3.0 + race.Contested * 2.20;
+            }))
             : Math.Min(14, races.Sum(x => x.Contested > 0 ? 2.5 + x.Contested * 0.9 : 0));
 
         return new Result
@@ -98,7 +110,7 @@ public static class HeroCopyRaceEvaluator
             return $"核心牌被同行争抢：{p.Hero}你约{p.Held}张/同行约{p.Contested}张；预计搜牌成本上升。";
 
         if (p.Contested >= p.Held + 5 && p.Held <= 4)
-            return $"追三竞争明显不利：{p.Hero}你约{p.Held}张，同行约{p.Contested}张；除非装备/强化强绑定，否则应准备转阵。";
+            return $"追三竞争明显不利：{p.Hero}你约{p.Held}张，同行约{p.Contested}张；当前数量条件下不应锁定，除非装备/强化强绑定。";
         if (p.Contested >= p.Held + 3 && p.Held <= 3)
             return $"追三竞争偏劣：{p.Hero}你约{p.Held}张，同行约{p.Contested}张；下一轮仍无数量优势就降低追三优先级。";
 
@@ -113,12 +125,13 @@ public static class HeroCopyRaceEvaluator
         HeroRace? best = race.BestProgress;
         if (best is { Held: >= 8 } && best.Contested <= 3)
             return action + $" {best.Hero}已有{best.Held}张，优先完成三星后立即停D。";
-        if (best is { Held: >= 7 } && best.Contested <= 3)
-            return action + $" {best.Hero}已有{best.Held}张，已接近三星，转阵前必须计入这部分沉没成本。";
 
         HeroRace? worst = race.WorstPressure;
         if (worst != null && worst.Contested >= worst.Held + 5 && worst.Held <= 4)
             return action + $" {worst.Hero}同行库存明显领先，本轮不要继续无上限追三，优先评估转阵。";
+
+        if (best is { Held: >= 7 } && best.Contested <= 3)
+            return action + $" {best.Hero}已有{best.Held}张，已接近三星，转阵前必须计入这部分沉没成本。";
 
         if (best is { Held: >= 5 })
             return action + $" {best.Hero}已有{best.Held}张，继续观察单卡进度，不要把不同核心张数合并判断。";
