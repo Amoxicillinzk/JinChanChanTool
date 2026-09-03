@@ -49,7 +49,7 @@ public static class AiCoachBootstrap
             int y = Math.Max(working.Top + 8, Math.Min(main.Top, working.Bottom - _coachForm.Height));
             _coachForm.Location = new Point(Math.Max(working.Left, x), y);
 
-            ApplyV3UiState(_coachForm);
+            ApplyV4UiState(_coachForm);
             LiveBoardState.Changed += OnBoardStateChanged;
             LiveHudState.Changed += OnHudStateChanged;
             OnlineMetaState.Changed += OnOnlineMetaChanged;
@@ -60,8 +60,10 @@ public static class AiCoachBootstrap
             _hudWatcher = new HudStateWatcher(main, cardService);
             _hudWatcher.Start();
 
+            // V4：启动时只读取上次手动刷新生成时使用的 Meta 缓存。
+            // 不后台访问网络，避免 AI 教练与 LineUps.json 漂移成两个版本。
             _onlineMetaService = new OnlineMetaService();
-            _onlineMetaService.Start();
+            _onlineMetaService.LoadCacheOnly();
 
             if (!_exitHooked)
             {
@@ -88,7 +90,7 @@ public static class AiCoachBootstrap
         }
     }
 
-    private static void ApplyV3UiState(AiCoachForm form)
+    private static void ApplyV4UiState(AiCoachForm form)
     {
         try
         {
@@ -104,13 +106,16 @@ public static class AiCoachBootstrap
             }
             if (typeof(AiCoachForm).GetField("_statusLabel", flags)?.GetValue(form) is Label statusLabel)
             {
-                statusLabel.Text = "V3：正在加载当前版本在线 Meta；无在线数据时自动回退本地阵容库。";
+                OnlineMetaSnapshot meta = OnlineMetaState.GetSnapshot();
+                statusLabel.Text = meta.HasData
+                    ? $"V4：已载入上次手动刷新 Meta（{meta.Comps.Count}套）。点主程序“刷新Meta阵容”才会更新版本并重建LineUps.json。"
+                    : "V4：尚无固定Meta快照，请在主程序菜单点击“刷新Meta阵容”。";
             }
-            form.Text = "AI 云顶教练 V3｜在线Meta加载中...";
+            form.Text = "AI 云顶教练 V4｜Meta与阵容库同步模式";
         }
         catch
         {
-            form.Text = "AI 云顶教练 V3";
+            form.Text = "AI 云顶教练 V4";
         }
     }
 
@@ -129,12 +134,12 @@ public static class AiCoachBootstrap
                 {
                     if (snapshot.HasData)
                     {
-                        string cache = snapshot.FromCache ? "（缓存）" : "";
-                        statusLabel.Text = $"在线Meta：{snapshot.Source}{cache}，{snapshot.Comps.Count}套，更新 {snapshot.UpdatedAt:HH:mm}。推荐已改为在线版本数据驱动。";
+                        string cache = snapshot.FromCache ? "（固定缓存）" : "（刚手动刷新）";
+                        statusLabel.Text = $"Meta：{snapshot.Source}{cache}，{snapshot.Comps.Count}套，版本快照时间 {snapshot.UpdatedAt:MM-dd HH:mm}。主程序与AI教练共用此快照。";
                     }
                     else if (!string.IsNullOrWhiteSpace(snapshot.Error))
                     {
-                        statusLabel.Text = $"在线Meta暂不可用：{snapshot.Error}；当前使用本地阵容兜底。";
+                        statusLabel.Text = $"Meta不可用：{snapshot.Error}；请点击主程序“刷新Meta阵容”。";
                     }
                 }
             }));
@@ -191,14 +196,14 @@ public static class AiCoachBootstrap
         LiveBoardSnapshot board = LiveBoardState.GetSnapshot();
         OnlineMetaSnapshot meta = OnlineMetaState.GetSnapshot();
         string hudText = BuildHudTitle(hud);
-        string metaText = meta.HasData ? $"｜Meta {meta.Comps.Count}套" : "｜Meta兜底";
+        string metaText = meta.HasData ? $"｜Meta {meta.Comps.Count}套" : "｜Meta未刷新";
 
         if (board.InferredHeroes.Count > 0)
-            form.Text = $"AI 云顶教练 V3{hudText}{metaText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
+            form.Text = $"AI 云顶教练 V4{hudText}{metaText}｜上场：{string.Join(" / ", board.InferredHeroes)}";
         else if (board.Traits.Count > 0)
-            form.Text = $"AI 云顶教练 V3{hudText}{metaText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
+            form.Text = $"AI 云顶教练 V4{hudText}{metaText}｜羁绊：{string.Join(" / ", board.Traits.Take(4).Select(x => $"{x.Key}{x.Value}"))}";
         else
-            form.Text = $"AI 云顶教练 V3{hudText}{metaText}";
+            form.Text = $"AI 云顶教练 V4{hudText}{metaText}";
     }
 
     private static string BuildHudTitle(LiveHudSnapshot hud)
