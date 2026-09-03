@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/ai-coach-v1
+      - feat/ai-coach-v2-inventory
   workflow_dispatch:
 
 jobs:
@@ -29,7 +30,7 @@ jobs:
           --self-contained false
           -o publish
 
-      - name: Package bundled S18 lineup library
+      - name: Package bundled S18 fallback lineup library
         shell: pwsh
         run: |
           $target = "publish/Resources/HeroDatas/S18"
@@ -49,13 +50,13 @@ jobs:
             [System.IO.File]::WriteAllText((Join-Path $target "LineUps.json"), $json, [System.Text.UTF8Encoding]::new($false))
           }
 
-      - name: Package
+      - name: Package V3
         shell: pwsh
-        run: Compress-Archive -Path publish/* -DestinationPath JinChanChanTool-AICoach-V1-win-x64.zip -Force
+        run: Compress-Archive -Path publish/* -DestinationPath JinChanChanTool-AICoach-V3-win-x64.zip -Force
 
-      - name: Upload artifact
+      - name: Upload V3 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JinChanChanTool-AICoach-V1-win-x64
-          path: JinChanChanTool-AICoach-V1-win-x64.zip
+          name: JinChanChanTool-AICoach-V3-win-x64
+          path: JinChanChanTool-AICoach-V3-win-x64.zip
           retention-days: 14

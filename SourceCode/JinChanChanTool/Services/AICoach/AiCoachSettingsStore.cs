@@ -19,7 +19,31 @@ public sealed class AiCoachSettingsStore
         try
         {
             if (!File.Exists(_path)) return new AiCoachSettings();
-            return JsonSerializer.Deserialize<AiCoachSettings>(File.ReadAllText(_path), JsonOptions) ?? new AiCoachSettings();
+            AiCoachSettings settings = JsonSerializer.Deserialize<AiCoachSettings>(File.ReadAllText(_path), JsonOptions) ?? new AiCoachSettings();
+
+            if (settings.SettingsVersion < 3)
+            {
+                settings.AutoDetectEquipments = false;
+                settings.AutoDetectBoardTraits = true;
+            }
+
+            if (settings.SettingsVersion < 4)
+            {
+                settings.AutoDetectHud = true;
+                settings.HudRefreshIntervalMs = 1000;
+            }
+
+            // V3：在线 Meta 成为推荐主数据源；固定 LineUps.json 只做断网兜底。
+            if (settings.SettingsVersion < 5)
+            {
+                settings.UseOnlineMeta = true;
+                settings.OnlineMetaCacheMinutes = 30;
+                settings.IncludeLowPickStrongComps = true;
+                settings.SettingsVersion = 5;
+                Save(settings);
+            }
+
+            return settings;
         }
         catch
         {
@@ -29,6 +53,8 @@ public sealed class AiCoachSettingsStore
 
     public void Save(AiCoachSettings settings)
     {
+        settings.SettingsVersion = Math.Max(settings.SettingsVersion, 5);
+        settings.OnlineMetaCacheMinutes = Math.Clamp(settings.OnlineMetaCacheMinutes, 5, 240);
         File.WriteAllText(_path, JsonSerializer.Serialize(settings, JsonOptions));
     }
 }
